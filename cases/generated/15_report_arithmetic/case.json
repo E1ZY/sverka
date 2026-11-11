@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "15_report_arithmetic",
+  "title": "Ошибка только в общем итоге",
+  "description": "Верхние статьи верны, но итог отчёта завышен на 0,01 руб.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": null,
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "10d63f20c4261be9fefc7b9b0e0ac5d781e3c14af8bb9480ebbf343e98c5bda4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "c57489223b7972ec65010afc05157b27cb3742682551e772cc5c0ecc69a549b2"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "7c0ab89614acfccbdd452dda592e6804933cd216362a3514cf32694c7dfa35e4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/payroll.xlsx",
+      "sha256": "d77e780ca32d1d4436f2aded779b00a9d89a1e9d7f8ccd845c9983b1663f9c96"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "bfedfba676186eef82c3d7dd6fdb220fd980c5f9ccfddd59255aa059858cf7dd"
+    }
+  ]
+}

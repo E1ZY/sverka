@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -13,15 +14,20 @@ from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from .config import DATA, DEMO_DIR, MAX_CASE_FILES, MAX_FILE_BYTES, ROOT
-from .db import Case, Document, Review, Run, Session, init_db, uid
+from .db import Case, Document, FixtureBatch, Review, Run, Session, init_db, uid
 from .domain import ARTICLES, money
 from .extractors import SUPPORTED, digest, page_image
 from .pipeline import document_dict, enqueue, loop
+from .uploads import validate_file
+from .fixtures import compare_fixture, fixture_inputs, list_fixtures, load_oracle
+from .fixture_batches import batch_dict
 
 
 @asynccontextmanager
@@ -128,17 +134,12 @@ def read_case(case_id: str):
         docs = session.scalars(select(Document).where(Document.case_id == case_id).order_by(Document.name)).all()
         runs = session.scalars(select(Run).where(Run.case_id == case_id).order_by(Run.created_at.desc())).all()
         reviews = session.scalars(select(Review).where(Review.case_id == case_id).order_by(Review.created_at)).all()
+        result = next((r.payload for r in runs if r.id == case.active_run_id), None)
+        comparison = compare_fixture(case.context['fixture_id'], result) if case.context.get('fixture_id') and result else None
         return {**case_dict(case), 'documents': [document_dict(d) for d in docs],
                 'runs': [{'id': r.id, 'created_at': r.created_at.isoformat(), 'status': r.status, 'progress': r.progress, 'message': r.message} for r in runs],
-                'result': next((r.payload for r in runs if r.id == case.active_run_id), None),
+                'result': result, 'fixture_comparison': comparison,
                 'reviews': [{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'before': r.before, 'reason': r.reason, 'created_at': r.created_at.isoformat()} for r in reviews]}
-
-
-def validate_file(path):
-    if path.suffix in {'.xlsx', '.docx'}:
-        with zipfile.ZipFile(path) as archive:
-            if sum(z.file_size for z in archive.infolist()) > 100 * 1024 * 1024:
-                raise ValueError('Слишком большой распакованный документ')
 
 
 @app.post('/api/cases/{case_id}/documents', status_code=201)
@@ -293,6 +294,129 @@ def demo():
             session.add(Document(case_id=case.id, name=source.name, path=str(dest), sha256=digest(dest), role=item['role']))
         run = enqueue(session, case)
         return {'case_id': case.id, 'run_id': run.id}
+
+
+@app.get('/api/fixtures')
+def fixtures():
+    return list_fixtures()
+
+
+def create_fixture_run(session, fixture_id, created_files, created_directories):
+    manifest, inputs = fixture_inputs(fixture_id)
+    # Same document validator as the manual multipart upload. Invalid files
+    # are rejected before a case or a calculation job can be created.
+    for source, role, sha in inputs:
+        try:
+            validate_file(source)
+        except (ValueError, zipfile.BadZipFile) as exc:
+            expected_status = load_oracle(fixture_id)['upload_status']
+            return {
+                'status': 'rejected', 'fixture_id': fixture_id, 'filename': source.name,
+                'message': str(exc), 'actual_http_status': 400, 'expected_http_status': expected_status,
+                'matches_expected': expected_status == 400,
+            }
+    written = []
+    directory = None
+    try:
+        context = Context.model_validate(manifest['context']).model_dump(mode='json')
+        context.update(row_label=manifest['context']['row_label'], fixture_id=fixture_id)
+        case = Case(title=manifest['title'], context=context)
+        session.add(case)
+        session.flush()
+        directory = DATA/case.id
+        directory.mkdir(exist_ok=False)
+        created_directories.append(directory)
+        for source, role, sha in inputs:
+            dest = directory/(uid()+source.suffix.lower())
+            written.append(dest)
+            created_files.append(dest)
+            shutil.copyfile(source, dest)
+            session.add(Document(case_id=case.id, name=source.name, path=str(dest), sha256=sha, role=role))
+        run = enqueue(session, case)
+        return {'status': 'queued', 'case_id': case.id, 'run_id': run.id, 'fixture_id': fixture_id}
+    except Exception:
+        for path in written:
+            path.unlink(missing_ok=True)
+        if directory and directory.exists():
+            directory.rmdir()
+        raise
+
+
+def cleanup_fixture_import(created_files, created_directories):
+    for path in created_files:
+        path.unlink(missing_ok=True)
+    for directory in reversed(created_directories):
+        if directory.exists():
+            directory.rmdir()
+
+
+@app.post('/api/fixtures/{fixture_id}/runs', status_code=202)
+def launch_fixture(fixture_id: str):
+    created_files, created_directories = [], []
+    try:
+        with Session.begin() as session:
+            result = create_fixture_run(session, fixture_id, created_files, created_directories)
+        return JSONResponse(status_code=200, content=result) if result['status'] == 'rejected' else result
+    except Exception:
+        cleanup_fixture_import(created_files, created_directories)
+        raise
+
+
+@app.get('/api/fixture-batches/latest')
+def latest_fixture_batch():
+    with Session.begin() as session:
+        batch = session.scalar(select(FixtureBatch).order_by(FixtureBatch.created_at.desc(), FixtureBatch.id.desc()).limit(1))
+        return batch_dict(session, batch) if batch else None
+
+
+@app.get('/api/fixture-batches/{batch_id}')
+def read_fixture_batch(batch_id: str):
+    with Session.begin() as session:
+        batch = session.get(FixtureBatch, batch_id)
+        if not batch:
+            raise HTTPException(404, 'Общий прогон не найден')
+        return batch_dict(session, batch)
+
+
+@app.post('/api/fixture-batches', status_code=202)
+def start_fixture_batch():
+    items = list_fixtures()
+    if not items:
+        raise HTTPException(400, 'Нет установленных тестовых кейсов')
+    created_files, created_directories = [], []
+    try:
+        with Session.begin() as session:
+            active = session.scalar(select(FixtureBatch).where(FixtureBatch.active_key == 'all'))
+            if active and batch_dict(session, active)['status'] != 'completed':
+                raise HTTPException(409, 'Общий прогон уже выполняется. Откройте его результаты.')
+            batch = FixtureBatch(active_key='all')
+            session.add(batch)
+            session.flush()
+            outcomes = []
+            for item in items:
+                snapshot = {key: item[key] for key in ('title', 'known_limitation')}
+                snapshot['fixture_id'] = item['id']
+                try:
+                    # A bad case rolls back only its own database records.
+                    with session.begin_nested():
+                        result = create_fixture_run(session, item['id'], created_files, created_directories)
+                    snapshot.update(result)
+                    if result['status'] == 'rejected':
+                        snapshot['upload_result'] = result
+                except Exception as exc:
+                    message = exc.detail if isinstance(exc, HTTPException) else str(exc)
+                    logging.getLogger(__name__).warning('Fixture %s could not start: %s', item['id'], message)
+                    snapshot.update(status='error', message=str(message)[:1000])
+                outcomes.append(snapshot)
+            batch.items = outcomes
+            batch_id = batch.id
+    except IntegrityError:
+        cleanup_fixture_import(created_files, created_directories)
+        raise HTTPException(409, 'Общий прогон уже выполняется. Откройте его результаты.')
+    except Exception:
+        cleanup_fixture_import(created_files, created_directories)
+        raise
+    return read_fixture_batch(batch_id)
 
 
 frontend = ROOT/'frontend'/'dist'

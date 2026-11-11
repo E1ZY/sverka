@@ -3,11 +3,14 @@
 .runtime
 .pytest_cache
 **/__pycache__
-data
-frontend/node_modules
+/data
+cases/templates
+cases/*.zip
+cases/*.local.json
+**/node_modules
 frontend/dist
 **/!*.xlsx
-**/00_*
+task/data/00_*
 task/*.docx
 tests
 .env

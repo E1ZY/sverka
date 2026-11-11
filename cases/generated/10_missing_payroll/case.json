@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "id": "10_missing_payroll",
+  "title": "Нет ведомости за январь",
+  "description": "Ожидаемая зарплата и общий итог неизвестны; отсутствие файла не равно нулю.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": null,
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "ce5ddf640dd5c00ff70267297f70ce22d6dc6ea5581f6fd8154bc744126a290c"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "c57489223b7972ec65010afc05157b27cb3742682551e772cc5c0ecc69a549b2"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "7c0ab89614acfccbdd452dda592e6804933cd216362a3514cf32694c7dfa35e4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "bfedfba676186eef82c3d7dd6fdb220fd980c5f9ccfddd59255aa059858cf7dd"
+    }
+  ]
+}

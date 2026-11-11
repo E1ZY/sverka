@@ -69,7 +69,7 @@ def test_custom_multipart_uploads_with_renamed_files(client):
     context = {k:v for k,v in manifest['context'].items() if k!='row_label'}
     case = client.post('/api/cases', json={'title':'Загрузка через API',**context}).json()
     for role in ['report','primary']:
-        files = [('files', (f'input-{i}{Path(item["name"]).suffix}', (root/'task/данные'/item['name']).read_bytes()))
+        files = [('files', (f'input-{i}{Path(item["name"]).suffix}', (root/'task/data'/item['name']).read_bytes()))
                  for i,item in enumerate(manifest['files']) if item['role']==role]
         r = client.post(f'/api/cases/{case["id"]}/documents',data={'role':role},files=files)
         assert r.status_code == 201, r.text

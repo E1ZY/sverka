@@ -1,4 +1,5 @@
 import copy
+import json
 from decimal import Decimal
 from pathlib import Path
 
@@ -17,12 +18,15 @@ def recalculate(baseline, mutate):
 
 def test_full_dataset_against_independent_answer_workbook(baseline):
     # The answer workbook is imported here only; never in app/ or demo manifest.
-    sheet = load_workbook(ROOT/'task/данные/!Правильные_ответы_и_разбор.xlsx', data_only=True)['Эталон']
+    sheet = load_workbook(ROOT/'task/data/!Правильные_ответы_и_разбор.xlsx', data_only=True)['Эталон']
+    oracle = json.loads((ROOT/'demo/expected.json').read_text(encoding='utf-8'))
     metrics = baseline['result']['metrics']
     for metric, row in zip(metrics, range(4, 9)):
         assert money(metric['actual']) == money(sheet[f'B{row}'].value)
         assert money(metric['expected']) == money(sheet[f'C{row}'].value)
         assert money(metric['delta']) == money(sheet[f'D{row}'].value)
+        # The UI oracle stays consistent with the independent answer workbook.
+        assert oracle['metrics'][metric['code']] == {key: metric[key] for key in ('actual', 'expected', 'delta', 'status')}
     assert [m['status'] for m in metrics] == ['MATCH', 'MATCH', 'MISMATCH', 'MATCH', 'MISMATCH']
     assert {f['type'] for f in baseline['result']['findings']} == {'DUPLICATE', 'OUT_OF_PERIOD', 'WRONG_CONTRACT'}
     assert baseline['result']['summary']['included_documents'] == 19

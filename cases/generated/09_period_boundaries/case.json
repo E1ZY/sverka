@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "id": "09_period_boundaries",
+  "title": "Включительные границы периода",
+  "description": "Акты 01.01 и 31.01 учитываются; 31.12 и 01.02 исключаются.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": null,
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "389cb08fb14872168bba090436b51bd19c6ffa0262ea0685c6c0bab8f4c52659"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "c57489223b7972ec65010afc05157b27cb3742682551e772cc5c0ecc69a549b2"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/after_period.pdf",
+      "sha256": "8c89220fe5726e7cd1a15a966abe647815e7b30d05b64cec392366198ee809c4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/before_period.pdf",
+      "sha256": "2ed66dbf3735b845bb7e735e6613b033e25c8ad987f6581c8c7567b8a791a97c"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "7c0ab89614acfccbdd452dda592e6804933cd216362a3514cf32694c7dfa35e4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/payroll.xlsx",
+      "sha256": "d77e780ca32d1d4436f2aded779b00a9d89a1e9d7f8ccd845c9983b1663f9c96"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "bfedfba676186eef82c3d7dd6fdb220fd980c5f9ccfddd59255aa059858cf7dd"
+    }
+  ]
+}

@@ -66,6 +66,15 @@ class Review(Base):
     reason: Mapped[str] = mapped_column(Text)
 
 
+class FixtureBatch(Base):
+    __tablename__ = 'fixture_batches'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # The database permits only one active whole-catalog run at a time.
+    active_key: Mapped[str | None] = mapped_column(String(20), unique=True, nullable=True)
+    items: Mapped[list] = mapped_column(JSON, default=list)
+
+
 engine = create_engine(DATABASE_URL, **({'connect_args': {'check_same_thread': False, 'timeout': 30}} if DATABASE_URL.startswith('sqlite') else {}))
 if DATABASE_URL.startswith('sqlite'):
     @event.listens_for(engine, 'connect')

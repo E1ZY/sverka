@@ -1,0 +1,245 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "00_clean",
+      "title": "Полностью корректный комплект",
+      "description": "Четыре статьи и итог совпадают. Контрольная точка для всех остальных сценариев.",
+      "known_limitation": null,
+      "manifest": "generated/00_clean/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "01_overstatement",
+      "title": "Завышена статья 0800",
+      "description": "В отчёте производственные расходы завышены на 12 500,00 руб.",
+      "known_limitation": null,
+      "manifest": "generated/01_overstatement/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "02_understatement",
+      "title": "Занижена статья 0900",
+      "description": "Отрицательная дельта: в отчёте не хватает 1 000,01 руб.",
+      "known_limitation": null,
+      "manifest": "generated/02_understatement/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "03_pennies",
+      "title": "Копейки в каждом источнике",
+      "description": "Проверка точной десятичной агрегации без потери копеек.",
+      "known_limitation": null,
+      "manifest": "generated/03_pennies/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "04_byte_duplicate",
+      "title": "Байтовая копия с другим именем",
+      "description": "Повторный файл должен учитываться один раз.",
+      "known_limitation": null,
+      "manifest": "generated/04_byte_duplicate/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "05_semantic_duplicate",
+      "title": "Пересохранённый дубликат",
+      "description": "PDF отличается байтами и метаданными, но реквизиты и сумма совпадают.",
+      "known_limitation": null,
+      "manifest": "generated/05_semantic_duplicate/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "06_conflicting_revision",
+      "title": "Конфликт версий акта",
+      "description": "Совпадают номер, дата, договор и контрагент; суммы 25 000 и 26 000 руб.",
+      "known_limitation": null,
+      "manifest": "generated/06_conflicting_revision/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "07_same_number_other_vendor",
+      "title": "Одинаковый номер у разных контрагентов",
+      "description": "Две реальные операции по 25 000 руб. Дубликата нет.",
+      "known_limitation": null,
+      "manifest": "generated/07_same_number_other_vendor/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "08_wrong_contract",
+      "title": "Документ другого договора",
+      "description": "Дополнительный акт на 99 999 руб. не относится к договору проверки.",
+      "known_limitation": null,
+      "manifest": "generated/08_wrong_contract/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "09_period_boundaries",
+      "title": "Включительные границы периода",
+      "description": "Акты 01.01 и 31.01 учитываются; 31.12 и 01.02 исключаются.",
+      "known_limitation": null,
+      "manifest": "generated/09_period_boundaries/case.json",
+      "input_files": 7
+    },
+    {
+      "id": "10_missing_payroll",
+      "title": "Нет ведомости за январь",
+      "description": "Ожидаемая зарплата и общий итог неизвестны; отсутствие файла не равно нулю.",
+      "known_limitation": null,
+      "manifest": "generated/10_missing_payroll/case.json",
+      "input_files": 4
+    },
+    {
+      "id": "11_missing_contract",
+      "title": "В акте нет договора",
+      "description": "Документ с суммой, но без номера договора нельзя автоматически включить.",
+      "known_limitation": null,
+      "manifest": "generated/11_missing_contract/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "12_missing_amount",
+      "title": "В акте нет суммы",
+      "description": "Пропущена сумма первичного документа. Нельзя трактовать её как 0,00.",
+      "known_limitation": null,
+      "manifest": "generated/12_missing_amount/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "13_ambiguous_article",
+      "title": "Неоднозначное назначение",
+      "description": "В одной операции одновременно указаны производственное и административное назначения.",
+      "known_limitation": null,
+      "manifest": "generated/13_ambiguous_article/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "14_corrupt_pdf",
+      "title": "Повреждённый PDF",
+      "description": "Неверное содержимое файла с расширением PDF не должно приводить к падению всей проверки.",
+      "known_limitation": null,
+      "manifest": "generated/14_corrupt_pdf/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "15_report_arithmetic",
+      "title": "Ошибка только в общем итоге",
+      "description": "Верхние статьи верны, но итог отчёта завышен на 0,01 руб.",
+      "known_limitation": null,
+      "manifest": "generated/15_report_arithmetic/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "16_report_contract",
+      "title": "Другой договор в КФЗ",
+      "description": "Отчёт относится к другому договору, первичные документы - к выбранному.",
+      "known_limitation": null,
+      "manifest": "generated/16_report_contract/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "17_real_zeros",
+      "title": "Подтверждённые нулевые суммы",
+      "description": "Нулевые значения присутствуют в документах и подтверждаются полным комплектом.",
+      "known_limitation": null,
+      "manifest": "generated/17_real_zeros/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "18_credit_adjustment",
+      "title": "Отрицательная корректировка",
+      "description": "К производственным затратам добавлен отдельный корректировочный акт на -500,00 руб.",
+      "known_limitation": null,
+      "manifest": "generated/18_credit_adjustment/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "19_incomplete_package",
+      "title": "Комплект не заявлен полным",
+      "description": "Даже совпавшие суммы остаются частичным подтверждением.",
+      "known_limitation": null,
+      "manifest": "generated/19_incomplete_package/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "20_vat_components",
+      "title": "Стоимость без НДС и итог",
+      "description": "Нужно взять итог 25 000,00 руб., а не сумму без НДС или сам НДС.",
+      "known_limitation": "Парсер пока не различает роль денежных полей в многострочном счёте.",
+      "manifest": "generated/20_vat_components/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "21_text_typed_money",
+      "title": "Суммы Excel записаны текстом",
+      "description": "Значения 100000,00 и 10000,00 заданы строками; ожидается явная нормализация денежных полей.",
+      "known_limitation": "XLSX-парсер принимает только числовой тип ячеек.",
+      "manifest": "generated/21_text_typed_money/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "22_overlapping_service_period",
+      "title": "Период услуг пересекает границу",
+      "description": "Дата акта внутри января, но услуги оказаны 20.12.2025-10.01.2026. Требуется распределение.",
+      "known_limitation": "Извлечение периода пока не читает интервалы с двумя календарными датами.",
+      "manifest": "generated/22_overlapping_service_period/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "23_other_contract_sheet",
+      "title": "Другой договор на втором листе",
+      "description": "Второй лист ведомости явно относится к другому договору; его миллион нельзя добавлять к зарплате.",
+      "known_limitation": "Парсер объединяет строки всех листов под реквизитами первого листа.",
+      "manifest": "generated/23_other_contract_sheet/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "24_formula_error",
+      "title": "Ошибка формулы в начислении",
+      "description": "C6 содержит =1/0. Неисправное слагаемое нельзя молча пропускать.",
+      "known_limitation": "XLSX-парсер пока пропускает формулы в строках начислений.",
+      "manifest": "generated/24_formula_error/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "25_stale_formula_cache",
+      "title": "Устаревший кеш итога Excel",
+      "description": "В C8 намеренно записан неверный кеш 999999999. Исходные начисления дают 110 000 руб.",
+      "known_limitation": null,
+      "manifest": "generated/25_stale_formula_cache/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "26_png_scan",
+      "title": "Первичка в виде PNG-скана",
+      "description": "Производственный акт представлен только изображением; сумма и реквизиты должны распознаться.",
+      "known_limitation": null,
+      "manifest": "generated/26_png_scan/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "27_wrong_report_row",
+      "title": "В отчёте отсутствует нужная строка",
+      "description": "В КФЗ указан этап 4, а проверяется этап 3. Система должна явно отказаться от подстановки другой строки.",
+      "known_limitation": null,
+      "manifest": "generated/27_wrong_report_row/case.json",
+      "input_files": 5
+    },
+    {
+      "id": "28_corrupt_xlsx_upload",
+      "title": "Повреждённый XLSX при загрузке",
+      "description": "Файл не является ZIP-контейнером. API должен отклонить пакет первички с HTTP 400.",
+      "known_limitation": null,
+      "manifest": "generated/28_corrupt_xlsx_upload/case.json",
+      "input_files": 6
+    },
+    {
+      "id": "29_duplicate_month",
+      "title": "Две ведомости за один месяц",
+      "description": "Разные номера документов за январь. Нельзя автоматически суммировать два сводных расчёта.",
+      "known_limitation": null,
+      "manifest": "generated/29_duplicate_month/case.json",
+      "input_files": 6
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "25_stale_formula_cache",
+  "title": "Устаревший кеш итога Excel",
+  "description": "В C8 намеренно записан неверный кеш 999999999. Исходные начисления дают 110 000 руб.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": null,
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "bb4eb3249c05d1c898a1ce98c4eaab559b5388d7b18f089e7e7327c8a9a146bc"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "c57489223b7972ec65010afc05157b27cb3742682551e772cc5c0ecc69a549b2"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "7c0ab89614acfccbdd452dda592e6804933cd216362a3514cf32694c7dfa35e4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/payroll.xlsx",
+      "sha256": "1ab4813fbbd5f548f26b2e9a1a01de95a7fe652c0a39e88955a21987fb0a4946"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "bfedfba676186eef82c3d7dd6fdb220fd980c5f9ccfddd59255aa059858cf7dd"
+    }
+  ]
+}
