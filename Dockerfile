@@ -13,7 +13,10 @@ COPY requirements.txt constraints.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 COPY app/ app/
 COPY demo/manifest.json demo/manifest.json
-COPY task/данные/ /demo/
+COPY demo/expected.json demo/expected.json
+COPY task/data/ /demo/
+COPY cases/catalog.json cases/catalog.json
+COPY cases/generated/ cases/generated/
 COPY --from=frontend /ui/dist/ frontend/dist/
 RUN useradd --uid 10001 --create-home audit && mkdir -p /data && chown audit:audit /data
 USER audit

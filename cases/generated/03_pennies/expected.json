@@ -1,0 +1,38 @@
+{
+  "metrics": {
+    "0200": {
+      "actual": "110000.03",
+      "expected": "110000.03",
+      "delta": "0.00",
+      "status": "MATCH"
+    },
+    "0300": {
+      "actual": "33000.01",
+      "expected": "33000.01",
+      "delta": "0.00",
+      "status": "MATCH"
+    },
+    "0800": {
+      "actual": "25000.02",
+      "expected": "25000.02",
+      "delta": "0.00",
+      "status": "MATCH"
+    },
+    "0900": {
+      "actual": "12000.03",
+      "expected": "12000.03",
+      "delta": "0.00",
+      "status": "MATCH"
+    },
+    "total": {
+      "actual": "180000.09",
+      "expected": "180000.09",
+      "delta": "0.00",
+      "status": "MATCH"
+    }
+  },
+  "required_findings": {},
+  "exact_findings": true,
+  "report_extraction_error": false,
+  "upload_status": 201
+}

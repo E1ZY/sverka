@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "24_formula_error",
+  "title": "Ошибка формулы в начислении",
+  "description": "C6 содержит =1/0. Неисправное слагаемое нельзя молча пропускать.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": "XLSX-парсер пока пропускает формулы в строках начислений.",
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "c25a0e56f498d0cc6cacb0502b8deab143f9d387858a70e25dbb95cdf5ebc63a"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "c57489223b7972ec65010afc05157b27cb3742682551e772cc5c0ecc69a549b2"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "7c0ab89614acfccbdd452dda592e6804933cd216362a3514cf32694c7dfa35e4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/payroll.xlsx",
+      "sha256": "a2a6a0b65a610d65597fcd63cbd13de0286b72231c0ea2eafa0cb47a9201b149"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "bfedfba676186eef82c3d7dd6fdb220fd980c5f9ccfddd59255aa059858cf7dd"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+# Optional: generating fixtures, not running the application or fixture tests.
+reportlab==4.4.4
+Pillow==12.0.0
+pypdf==6.3.0

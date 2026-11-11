@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "13_ambiguous_article",
+  "title": "Неоднозначное назначение",
+  "description": "В одной операции одновременно указаны производственное и административное назначения.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": null,
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "84dad73b7616cc143fb1ef952c89a8c13ac00e44aa80159627a3cdb7fe4dc2f5"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "c57489223b7972ec65010afc05157b27cb3742682551e772cc5c0ecc69a549b2"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "7c0ab89614acfccbdd452dda592e6804933cd216362a3514cf32694c7dfa35e4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/payroll.xlsx",
+      "sha256": "d77e780ca32d1d4436f2aded779b00a9d89a1e9d7f8ccd845c9983b1663f9c96"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "bfedfba676186eef82c3d7dd6fdb220fd980c5f9ccfddd59255aa059858cf7dd"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/unclear_purpose.pdf",
+      "sha256": "0920434331bb14d3c559f4fc30d8bba60154ad0a995f7994b7b9aa0ef30216c5"
+    }
+  ]
+}

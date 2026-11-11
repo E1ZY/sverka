@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "17_real_zeros",
+  "title": "Подтверждённые нулевые суммы",
+  "description": "Нулевые значения присутствуют в документах и подтверждаются полным комплектом.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": null,
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "587a2e20671d2d1ee82f02f62f0614714acdbe950497c449f86edb6b62e6f658"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "0a98543261f6075afb7d83ea64c191fc8cbb33d899c4112cb95eef60a2de861c"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "3717d74b00eb72a12a8397da267f96db6231a97fbfc01d1c21ad70bcb7a54866"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/payroll.xlsx",
+      "sha256": "1bd85fa7e6412c63178aaa1f9b2876589a685e20961925f545c5fff488610125"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "bc8800c050f27fd8550c4d2c91d180c5f40a0f07d543d7038797dc2dce79165f"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "id": "03_pennies",
+  "title": "Копейки в каждом источнике",
+  "description": "Проверка точной десятичной агрегации без потери копеек.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": null,
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "4fdb87d7cdf3147749ce8b538698bded756fcf00eb3419800095604f0dd4c4f2"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "e564edfe8f521034bf341fca88c26a3b0962730d12b19315316a731c169e051d"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "7ad19fa707503b07c91979803071306ea6e468dc0c936ee973ca613b57e627a0"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/payroll.xlsx",
+      "sha256": "29449b140c6af19077f751c368c18b03708880eb21aa6f574ad929b776ab3cba"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "c5277aa160e2bebb77bf18d7b5048943c5e64e3fdcc4bfa26fc522ec5fb2765d"
+    }
+  ]
+}

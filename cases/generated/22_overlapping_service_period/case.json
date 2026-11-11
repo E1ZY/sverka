@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "id": "22_overlapping_service_period",
+  "title": "Период услуг пересекает границу",
+  "description": "Дата акта внутри января, но услуги оказаны 20.12.2025-10.01.2026. Требуется распределение.",
+  "synthetic": true,
+  "context": {
+    "contract": "26/01/01-77",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-01-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  },
+  "known_limitation": "Извлечение периода пока не читает интервалы с двумя календарными датами.",
+  "files": [
+    {
+      "role": "report",
+      "path": "input/report.pdf",
+      "sha256": "232d8324e2f03646efa387c54a97a872004e95018830b0c79241c7948c0ba57a"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/administration.pdf",
+      "sha256": "c57489223b7972ec65010afc05157b27cb3742682551e772cc5c0ecc69a549b2"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/cross_period.pdf",
+      "sha256": "de7ab1c642b62af4575f1c2eb1b7ab77080029a16767a6360853c452a8817bd0"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/insurance.xlsx",
+      "sha256": "7c0ab89614acfccbdd452dda592e6804933cd216362a3514cf32694c7dfa35e4"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/payroll.xlsx",
+      "sha256": "d77e780ca32d1d4436f2aded779b00a9d89a1e9d7f8ccd845c9983b1663f9c96"
+    },
+    {
+      "role": "primary",
+      "path": "input/primary/production.pdf",
+      "sha256": "bfedfba676186eef82c3d7dd6fdb220fd980c5f9ccfddd59255aa059858cf7dd"
+    }
+  ]
+}

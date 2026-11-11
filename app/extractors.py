@@ -141,6 +141,10 @@ def extract_xlsx(path):
     fragments = []
     rows = []
     for sheet in book:
+        # OOXML permits worksheets without a stored <dimension>. Read-only
+        # openpyxl reports None until the used range is calculated explicitly.
+        if sheet.max_row is None or sheet.max_column is None:
+            sheet.calculate_dimension(force=True)
         if sheet.max_row > 10000 or sheet.max_column > 100:
             raise ValueError('Слишком большая таблица для MVP')
         for row in sheet:
@@ -184,6 +188,17 @@ def clusters(indices):
     return [int(sum(g)/len(g)) for g in groups]
 
 
+def pdf_region_text(path, box):
+    """Read native PDF glyphs in a normalized page box before resorting to OCR."""
+    if Path(path).suffix.lower() != '.pdf':
+        return ''
+    with pymupdf.open(path) as doc:
+        page = doc[0]
+        rect = pymupdf.Rect(box[0]*page.rect.width, box[1]*page.rect.height,
+                            box[2]*page.rect.width, box[3]*page.rect.height)
+        return page.get_textbox(rect).strip()
+
+
 def extract_report(path, context):
     """KФЗ profile: detect table grid, choose row by OCR label, then read configured columns.
 
@@ -221,7 +236,11 @@ def extract_report(path, context):
     for code, column in RULES['report_columns'].items():
         x0, x1 = xs[column-1], xs[column]
         candidates = []
-        for inset in (1, 2):
+        native_text = pdf_region_text(path, [x0/w, y0/h, x1/w, y1/h])
+        normalized = re.sub(r'\s', '', native_text).replace('.', ',')
+        if re.fullmatch(r'-?\d+,\d{2}', normalized):
+            candidates.append((100, str(money(normalized)), native_text))
+        for inset in (() if candidates else (1, 2)):
             crop = image.crop((x0+2, y0+inset, x1-2, y1-inset))
             crop = ImageOps.expand(crop.resize((crop.width*5, crop.height*5), Image.Resampling.LANCZOS), border=20, fill='white')
             tokens = ocr.words(crop, psm=7, numeric=True)
@@ -236,7 +255,9 @@ def extract_report(path, context):
         evidence[code] = fragment(text, page=1, bbox=[x0/w, y0/h, x1/w, y1/h], confidence=round(confidence, 1), column=column)
     # Header OCR separately avoids dense grid text corrupting contract identifiers.
     header = image.crop((0, 0, w, ys[0]))
-    data = metadata(image_fragments(header, 1))
+    native_header = pdf_region_text(path, [0, 0, 1, ys[0]/h])
+    header_fragments = [fragment(native_header, page=1, bbox=[0,0,1,ys[0]/h], confidence=100)] if native_header else image_fragments(header, 1)
+    data = metadata(header_fragments)
     data.update(report_values=values, report_evidence=evidence, row_label=context['row_label'],
                 needs_review=any(v is None for v in values.values()) or min(confidences) < 45,
                 parser='kfz-grid-v1', fragments=list(evidence.values()))

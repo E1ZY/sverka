@@ -25,6 +25,7 @@ import {
   X,
 } from "lucide-react";
 import "./style.css";
+import { FixtureBatchResults, type FixtureBatch } from "./FixtureBatchResults";
 
 type Evidence = {
   text: string;
@@ -93,6 +94,21 @@ type Result = {
   summary: { scope: string; included_documents: number };
   pipeline_version: string;
 };
+type FixtureDifference = {
+  label: string;
+  kind: "money" | "status" | "count" | "boolean";
+  expected: string | number | boolean | null;
+  actual: string | number | boolean | null;
+};
+type FixtureComparison = {
+  available: boolean;
+  matches: boolean | null;
+  fixture_id?: string;
+  title?: string;
+  known_limitation?: string | null;
+  differences: FixtureDifference[];
+  message?: string;
+};
 type Case = {
   id: string;
   title: string;
@@ -103,10 +119,12 @@ type Case = {
     period_start: string;
     period_end: string;
     complete_package: boolean;
+    fixture_id?: string;
   };
   active_run_id?: string;
   documents?: Doc[];
   result?: Result;
+  fixture_comparison?: FixtureComparison | null;
   runs?: {
     id: string;
     status: string;
@@ -122,6 +140,23 @@ type Case = {
     reason: string;
     created_at: string;
   }[];
+};
+type Fixture = {
+  id: string;
+  origin: "task" | "generated";
+  title: string;
+  description: string;
+  context: Case["context"];
+  known_limitation: string | null;
+  input_files: number;
+};
+type FixtureLaunch = {
+  status: "queued" | "rejected";
+  case_id?: string;
+  filename?: string;
+  matches_expected?: boolean;
+  actual_http_status?: number;
+  expected_http_status?: number;
 };
 const articles: Record<string, string> = {
   "0200": "Оплата труда",
@@ -200,6 +235,7 @@ function App() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [newOpen, setNewOpen] = useState(false),
+    [fixturesOpen, setFixturesOpen] = useState(false),
     [detail, setDetail] = useState<Metric | null>(null),
     [source, setSource] = useState<{ doc: Doc; evidence?: Evidence } | null>(
       null,
@@ -229,6 +265,7 @@ function App() {
     setDetail(null);
     setSource(null);
     setTab("checks");
+    setFilter("all");
   };
   const action = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -298,6 +335,10 @@ function App() {
           <History size={18} />
           История запусков
         </button>
+        <button className="nav" onClick={() => setFixturesOpen(true)}>
+          <Layers3 size={18} />
+          Тестовые кейсы
+        </button>
         <div className="sidebar-section">
           <span>ПОСЛЕДНИЕ ПРОВЕРКИ</span>
           <button aria-label="Новая проверка" onClick={() => setNewOpen(true)}>
@@ -354,10 +395,24 @@ function App() {
                   : "Загрузите отчёт и первичные документы. Мы соберём расчёт и покажем источники каждого результата."}
               </p>
             </div>
-            <button className="button primary" onClick={() => setNewOpen(true)}>
-              <Plus size={17} />
-              Новая проверка
-            </button>
+            <div className="heading-actions">
+              <button
+                className="button"
+                aria-label="Выбрать тестовый кейс"
+                onClick={() => setFixturesOpen(true)}
+              >
+                <Layers3 size={17} />
+                Тестовые кейсы
+              </button>
+              <button
+                className="button primary"
+                aria-label="Новая проверка"
+                onClick={() => setNewOpen(true)}
+              >
+                <Plus size={17} />
+                Новая проверка
+              </button>
+            </div>
           </div>
           {error && (
             <div role="alert" className="error-banner">
@@ -405,6 +460,14 @@ function App() {
                 <span>PNG</span>
                 <small>Включая сканы</small>
               </div>
+              <button
+                className="welcome-fixtures text-button"
+                onClick={() => setFixturesOpen(true)}
+              >
+                <Layers3 size={15} />
+                Выбрать готовый тестовый кейс
+                <ArrowRight size={14} />
+              </button>
             </div>
           ) : (
             <>
@@ -440,6 +503,11 @@ function App() {
                         : "Комплект документов"}
                 </div>
               </div>
+              {current.fixture_comparison && (
+                <FixtureComparisonPanel
+                  comparison={current.fixture_comparison}
+                />
+              )}
               {running && (
                 <div className="progress-card">
                   <Loader2 className="spin" size={20} />
@@ -883,6 +951,18 @@ function App() {
           }}
         />
       )}
+      {fixturesOpen && (
+        <FixtureCatalog
+          onClose={() => {
+            setFixturesOpen(false);
+            refresh().catch((e) => setError(e.message));
+          }}
+          onDone={(id) => {
+            setFixturesOpen(false);
+            choose(id);
+          }}
+        />
+      )}
       {detail && result && (
         <div className="overlay" onClick={() => setDetail(null)}>
           <section
@@ -1001,6 +1081,469 @@ function App() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+function FixtureComparisonPanel({
+  comparison,
+}: {
+  comparison: FixtureComparison;
+}) {
+  const value = (
+    v: FixtureDifference["actual"],
+    kind: FixtureDifference["kind"],
+  ) => {
+    if (v === null) return "Не определено";
+    if (kind === "money") return rub(String(v)) + " ₽";
+    if (kind === "status") return labels[String(v)] || String(v);
+    if (kind === "boolean") return v ? "Да" : "Нет";
+    return String(v);
+  };
+  if (!comparison.available)
+    return (
+      <div className="fixture-comparison unavailable">
+        <CircleAlert size={19} />
+        <p>{comparison.message}</p>
+      </div>
+    );
+  return (
+    <section
+      className={
+        "fixture-comparison " + (comparison.matches ? "confirmed" : "differs")
+      }
+      aria-label="Сравнение с эталоном"
+    >
+      <div className="fixture-comparison-heading">
+        {comparison.matches ? (
+          <CheckCheck size={23} />
+        ) : (
+          <CircleAlert size={23} />
+        )}
+        <div>
+          <span className="eyebrow">
+            ТЕСТОВЫЙ КЕЙС · {comparison.fixture_id}
+          </span>
+          <h2>
+            {comparison.matches
+              ? "Результат совпал с эталоном"
+              : "Результат отличается от эталона"}
+          </h2>
+          <p>
+            {comparison.matches
+              ? "Показатели, статусы и замечания соответствуют ожидаемому результату кейса."
+              : "Сверка завершена. Ниже можно проверить отличия полученного результата от ожидаемого."}
+          </p>
+        </div>
+      </div>
+      {comparison.known_limitation && (
+        <p className="fixture-limitation">
+          <strong>Известное ограничение MVP:</strong>{" "}
+          {comparison.known_limitation}
+        </p>
+      )}
+      {comparison.differences.length > 0 && (
+        <details className="fixture-differences">
+          <summary>Показать отличия ({comparison.differences.length})</summary>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Проверяемый показатель</th>
+                  <th>Эталон</th>
+                  <th>Получено</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparison.differences.map((d, i) => (
+                  <tr key={i}>
+                    <td>
+                      {d.label.replace(
+                        /Замечания · ([A-Z_]+)/,
+                        (_, code: string) =>
+                          "Замечания · " + (labels[code] || code),
+                      )}
+                    </td>
+                    <td>{value(d.expected, d.kind)}</td>
+                    <td>{value(d.actual, d.kind)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function FixtureCatalog({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: (id: string) => void;
+}) {
+  const [items, setItems] = useState<Fixture[]>([]),
+    [loading, setLoading] = useState(true),
+    [error, setError] = useState(""),
+    [query, setQuery] = useState(""),
+    [filter, setFilter] = useState("all"),
+    [chosen, setChosen] = useState(""),
+    [busy, setBusy] = useState(false),
+    [rejected, setRejected] = useState<FixtureLaunch | null>(null),
+    [batch, setBatch] = useState<FixtureBatch | null>(null),
+    [batchError, setBatchError] = useState(""),
+    [view, setView] = useState("catalog");
+  useEffect(() => {
+    let cancelled = false;
+    Promise.allSettled([
+      api<Fixture[]>("/fixtures"),
+      api<FixtureBatch | null>("/fixture-batches/latest"),
+    ])
+      .then(([catalog, latest]) => {
+        if (cancelled) return;
+        if (catalog.status === "fulfilled") setItems(catalog.value);
+        else setError(catalog.reason.message);
+        if (latest.status === "fulfilled") {
+          setBatch(latest.value);
+          if (latest.value?.status === "running") setView("batch");
+        } else setBatchError(latest.reason.message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (!batch || batch.status === "completed") return;
+    let cancelled = false;
+    let timer: number;
+    const id = batch.id;
+    const poll = async () => {
+      try {
+        const next = await api<FixtureBatch>(`/fixture-batches/${id}`);
+        if (!cancelled) {
+          setBatch(next);
+          setBatchError("");
+        }
+      } catch (e) {
+        if (!cancelled) setBatchError((e as Error).message);
+      } finally {
+        if (!cancelled) timer = window.setTimeout(poll, 1500);
+      }
+    };
+    timer = window.setTimeout(poll, 1000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [batch?.id, batch?.status]);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [busy, onClose]);
+  const visible = items.filter(
+    (item) =>
+      (filter === "all" ||
+        (filter === "limitations"
+          ? !!item.known_limitation
+          : !item.known_limitation)) &&
+      `${item.id} ${item.title} ${item.description}`
+        .toLowerCase()
+        .includes(query.toLowerCase()),
+  );
+  const active = visible.find((item) => item.id === chosen) || visible[0];
+  const select = (id: string) => {
+    setChosen(id);
+    setRejected(null);
+    setError("");
+  };
+  const launch = async () => {
+    if (!active) return;
+    setBusy(true);
+    setError("");
+    setRejected(null);
+    try {
+      const result = await api<FixtureLaunch>(`/fixtures/${active.id}/runs`, {
+        method: "POST",
+      });
+      if (result.status === "queued" && result.case_id) onDone(result.case_id);
+      else if (result.status === "rejected") setRejected(result);
+      else throw new Error("Не удалось запустить кейс");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const launchAll = async () => {
+    setBusy(true);
+    setError("");
+    setBatchError("");
+    setRejected(null);
+    try {
+      setBatch(await api<FixtureBatch>("/fixture-batches", { method: "POST" }));
+      setView("batch");
+    } catch (e) {
+      setError((e as Error).message);
+      // Another tab may already have started the same whole-catalog run.
+      try {
+        const latest = await api<FixtureBatch | null>("/fixture-batches/latest");
+        if (latest?.status === "running") {
+          setBatch(latest);
+          setView("batch");
+        }
+      } catch {
+        // The launch error remains visible; the catalog stays usable.
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+  const batchRunning = batch?.status === "running";
+  return (
+    <div className="overlay fixture-overlay">
+      <section
+        className="fixture-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Тестовые кейсы"
+      >
+        <header className="fixture-modal-heading">
+          <div>
+            <span className="eyebrow">ГОТОВЫЕ КОМПЛЕКТЫ ДОКУМЕНТОВ</span>
+            <h2>Тестовые кейсы</h2>
+            <p>
+              Выберите сценарий. Параметры и документы загрузятся автоматически.
+            </p>
+          </div>
+          <button
+            className="icon-button"
+            aria-label="Закрыть каталог кейсов"
+            disabled={busy}
+            onClick={onClose}
+          >
+            <X />
+          </button>
+        </header>
+        <div className="fixture-tabs" aria-label="Режим каталога кейсов">
+          <button
+            className={view === "catalog" ? "active" : ""}
+            disabled={busy}
+            onClick={() => setView("catalog")}
+          >
+            Каталог
+          </button>
+          <button
+            className={view === "batch" ? "active" : ""}
+            disabled={busy || !batch}
+            onClick={() => setView("batch")}
+          >
+            Общий прогон{batch ? ` · ${batch.done}/${batch.total}` : ""}
+          </button>
+        </div>
+        {view === "catalog" && <div className="fixture-toolbar">
+          <label className="search">
+            <Search size={16} />
+            <input
+              autoFocus
+              placeholder="Найти кейс по названию или номеру"
+              value={query}
+              disabled={busy}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setRejected(null);
+              }}
+            />
+          </label>
+          <div className="filters">
+            {[
+              ["all", "Все"],
+              ["supported", "Поддерживаются"],
+              ["limitations", "Ограничения MVP"],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                disabled={busy}
+                className={filter === id ? "active" : ""}
+                onClick={() => {
+                  setFilter(id);
+                  setRejected(null);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>}
+        {(error || batchError) && (
+          <p role="alert" className="fixture-error">
+            {error || batchError}
+          </p>
+        )}
+        {view === "batch" && batch ? <FixtureBatchResults batch={batch} onOpen={onDone} /> : <div className="fixture-layout">
+          <div className="fixture-list" aria-label="Список тестовых кейсов">
+            {loading ? (
+              <div className="empty-small">
+                <Loader2 size={22} className="spin" />
+                <p>Загружаем каталог…</p>
+              </div>
+            ) : visible.length ? (
+              visible.map((item) => (
+                <button
+                  className={
+                    "fixture-option " +
+                    (item.id === active?.id ? "selected" : "")
+                  }
+                  key={item.id}
+                  disabled={busy}
+                  aria-pressed={item.id === active?.id}
+                  onClick={() => select(item.id)}
+                >
+                  <span className="fixture-number">
+                    {item.origin === "task" ? "ТЗ" : item.id.slice(0, 2)}
+                  </span>
+                  <div>
+                    <strong>{item.title}</strong>
+                    <span>{item.description}</span>
+                    {item.origin === "task" && (
+                      <small className="task-fixture">Из задания</small>
+                    )}
+                    {item.known_limitation && <small>Ограничение MVP</small>}
+                  </div>
+                  {item.id === active?.id && <Check size={17} />}
+                </button>
+              ))
+            ) : (
+              <div className="empty-small">
+                {items.length
+                  ? "Кейсы не найдены. Измените запрос или фильтр."
+                  : "Тестовые комплекты не установлены. Можно загрузить свои документы через «Новая проверка»."}
+              </div>
+            )}
+          </div>
+          <aside className="fixture-description">
+            {active && (
+              <>
+                <span className="eyebrow">
+                  {active.origin === "task"
+                    ? "ИЗ ЗАДАНИЯ"
+                    : `КЕЙС ${active.id.slice(0, 2)}`}
+                </span>
+                <h3>{active.title}</h3>
+                <p>{active.description}</p>
+                <dl>
+                  <dt>Договор</dt>
+                  <dd>{active.context.contract}</dd>
+                  <dt>Этап</dt>
+                  <dd>{active.context.stage}</dd>
+                  <dt>Период</dt>
+                  <dd>
+                    {dt(active.context.period_start)} —{" "}
+                    {dt(active.context.period_end)}
+                  </dd>
+                  <dt>Комплект</dt>
+                  <dd>
+                    {active.input_files} файлов ·{" "}
+                    {active.context.complete_package
+                      ? "заявлен полным"
+                      : "полнота не подтверждена"}
+                  </dd>
+                </dl>
+                {active.known_limitation ? (
+                  <p className="fixture-scope">
+                    <CircleAlert size={17} />
+                    <span>
+                      <strong>Известное ограничение</strong>
+                      {active.known_limitation}
+                    </span>
+                  </p>
+                ) : (
+                  <p className="fixture-scope supported">
+                    <ShieldCheck size={17} />
+                    <span>Сценарий входит в регрессионную проверку MVP.</span>
+                  </p>
+                )}
+                <p className="fixture-oracle-note">
+                  После сверки появится отдельное сравнение с эталоном кейса.
+                </p>
+              </>
+            )}
+          </aside>
+        </div>}
+        {view === "catalog" && rejected && (
+          <div
+            className={
+              "fixture-rejection " +
+              (rejected.matches_expected ? "expected" : "unexpected")
+            }
+            role="status"
+          >
+            {rejected.matches_expected ? (
+              <CheckCheck size={21} />
+            ) : (
+              <CircleAlert size={21} />
+            )}
+            <div>
+              <strong>
+                {rejected.matches_expected
+                  ? "Повреждённый файл отклонён, как и ожидалось"
+                  : "Результат загрузки отличается от эталона"}
+              </strong>
+              <p>
+                {rejected.filename}: проверка формата отклонила загрузку. Код{" "}
+                {rejected.actual_http_status}, ожидается{" "}
+                {rejected.expected_http_status}. Сверка сумм не запускалась.
+              </p>
+            </div>
+          </div>
+        )}
+        <footer className="fixture-modal-footer">
+          <span>
+            {view === "batch" && batch
+              ? `Проверено ${batch.done} из ${batch.total} кейсов`
+              : `${visible.length} из ${items.length} кейсов · локальная обработка`}
+          </span>
+          <div className="fixture-footer-actions">
+          <button
+            className={"button " + (view === "batch" ? "primary" : "")}
+            disabled={loading || busy || !items.length || batchRunning}
+            title="Проверить весь каталог, включая кейсы, скрытые поиском и фильтрами"
+            onClick={launchAll}
+          >
+            {busy ? (
+              <Loader2 size={17} className="spin" />
+            ) : (
+              <CheckCheck size={17} />
+            )}
+            {batchRunning
+              ? "Прогон выполняется…"
+              : view === "batch"
+                ? "Прогнать все заново"
+                : `Прогнать все (${items.length})`}
+          </button>
+          {view === "catalog" &&
+          <button
+            className="button primary"
+            disabled={loading || busy || !active}
+            onClick={launch}
+          >
+            {busy ? (
+              <Loader2 size={17} className="spin" />
+            ) : (
+              <ArrowRight size={17} />
+            )}{" "}
+            {busy ? "Загружаем комплект…" : "Запустить проверку"}
+          </button>}
+          </div>
+        </footer>
+      </section>
     </div>
   );
 }

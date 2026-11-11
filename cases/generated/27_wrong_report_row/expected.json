@@ -1,0 +1,38 @@
+{
+  "metrics": {
+    "0200": {
+      "actual": null,
+      "expected": null,
+      "delta": null,
+      "status": "INSUFFICIENT_DATA"
+    },
+    "0300": {
+      "actual": null,
+      "expected": null,
+      "delta": null,
+      "status": "INSUFFICIENT_DATA"
+    },
+    "0800": {
+      "actual": null,
+      "expected": null,
+      "delta": null,
+      "status": "INSUFFICIENT_DATA"
+    },
+    "0900": {
+      "actual": null,
+      "expected": null,
+      "delta": null,
+      "status": "INSUFFICIENT_DATA"
+    },
+    "total": {
+      "actual": null,
+      "expected": null,
+      "delta": null,
+      "status": "INSUFFICIENT_DATA"
+    }
+  },
+  "required_findings": {},
+  "exact_findings": true,
+  "report_extraction_error": true,
+  "upload_status": 201
+}
