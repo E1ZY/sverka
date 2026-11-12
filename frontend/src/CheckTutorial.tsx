@@ -10,6 +10,7 @@ export type TutorialStep = {
   waitingText?: string;
   successText?: string;
   content?: ReactNode;
+  focusPadding?: number;
 };
 
 const overviewSteps: TutorialStep[] = [
@@ -46,6 +47,7 @@ const focusable = 'button:not(:disabled), a[href], input:not(:disabled), select:
 
 export function CheckTutorial({ root, onClose, steps = overviewSteps, step: controlledStep, onStepChange, onFinish,
   label = "Как сделать проверку", exitLabel = "Пропустить",
+  stepOffset = 0, totalSteps = steps.length, finishLabel = "Завершить обучение",
 }: {
   root: RefObject<HTMLElement | null>;
   onClose: () => void;
@@ -55,6 +57,9 @@ export function CheckTutorial({ root, onClose, steps = overviewSteps, step: cont
   onFinish?: () => void;
   label?: string;
   exitLabel?: string;
+  stepOffset?: number;
+  totalSteps?: number;
+  finishLabel?: string;
 }) {
   const [internalStep, setInternalStep] = useState(0);
   const step = controlledStep ?? internalStep;
@@ -113,16 +118,25 @@ export function CheckTutorial({ root, onClose, steps = overviewSteps, step: cont
     target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
     let frame = 0;
     const measure = () => {
-      const scroller = owner?.querySelector(".new-case-fields");
-      const clip = scroller?.contains(target) ? scroller.getBoundingClientRect() : null;
       const width = window.innerWidth, height = window.innerHeight;
       const bounds = () => {
         const rect = target.getBoundingClientRect();
+        const padding = current.focusPadding ?? 7;
         const box = {
-          left: Math.max(4, rect.left - 7), right: Math.min(width - 4, rect.right + 7),
-          top: Math.max(4, rect.top - 7, clip?.top ?? 0),
-          bottom: Math.min(height - 4, rect.bottom + 7, clip?.bottom ?? height),
+          left: Math.max(4, rect.left - padding), right: Math.min(width - 4, rect.right + padding),
+          top: Math.max(4, rect.top - padding), bottom: Math.min(height - 4, rect.bottom + padding),
         };
+        // The evidence can sit inside a scrolling scan, not only the upload form.
+        for (let parent = target.parentElement; parent; parent = parent.parentElement) {
+          const style = getComputedStyle(parent);
+          if (!/(auto|scroll|hidden|clip)/.test(style.overflowX + style.overflowY)) continue;
+          const clip = parent.getBoundingClientRect();
+          box.left = Math.max(box.left, clip.left);
+          box.right = Math.min(box.right, clip.right);
+          box.top = Math.max(box.top, clip.top);
+          box.bottom = Math.min(box.bottom, clip.bottom);
+        }
+        box.right = Math.max(box.left, box.right);
         box.bottom = Math.max(box.top, box.bottom);
         return box;
       };
@@ -144,17 +158,23 @@ export function CheckTutorial({ root, onClose, steps = overviewSteps, step: cont
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(measure);
     };
+    const loaded = () => {
+      target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+      schedule();
+    };
     measure();
     const observer = new ResizeObserver(schedule);
     observer.observe(target);
     if (card.current) observer.observe(card.current);
     window.addEventListener("resize", schedule);
     document.addEventListener("scroll", schedule, true);
+    owner?.addEventListener("load", loaded, true);
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("resize", schedule);
       document.removeEventListener("scroll", schedule, true);
+      owner?.removeEventListener("load", loaded, true);
     };
   }, [root, current]);
 
@@ -174,11 +194,11 @@ export function CheckTutorial({ root, onClose, steps = overviewSteps, step: cont
         aria-label={label} aria-describedby="tutorial-description"
         style={{ left: position?.left ?? 12, top: position?.top ?? 12, visibility: position ? "visible" : "hidden" }}>
         <div className="tutorial-caption">
-          <span>{label.toUpperCase()} · {step + 1} ИЗ {steps.length}</span>
+          <span>{label.toUpperCase()} · {step + stepOffset + 1} ИЗ {totalSteps}</span>
           <button type="button" onClick={onClose} aria-label="Закрыть обучение"><X size={18} /></button>
         </div>
         <div className="tutorial-progress" aria-hidden="true">
-          {steps.map((item, index) => <span key={item.target} className={index <= step ? "done" : ""} />)}
+          {Array.from({ length: totalSteps }, (_, index) => <span key={index} className={index <= step + stepOffset ? "done" : ""} />)}
         </div>
         <div aria-live="polite" aria-atomic="true">
           <h3>{current.title}</h3>
@@ -197,7 +217,7 @@ export function CheckTutorial({ root, onClose, steps = overviewSteps, step: cont
             if (step === steps.length - 1) (onFinish || onClose)();
             else setStep(step + 1);
           }}>
-            {step === steps.length - 1 ? <>Завершить обучение<Check size={16} /></> : <>Далее<ArrowRight size={16} /></>}
+            {step === steps.length - 1 ? <>{finishLabel}<Check size={16} /></> : <>Далее<ArrowRight size={16} /></>}
           </button>
         </div>
       </section>

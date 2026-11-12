@@ -32,7 +32,7 @@ import { FixtureBatchResults, type FixtureBatch } from "./FixtureBatchResults";
 import { useDialog } from "./useDialog";
 import { useReportContext } from "./useReportContext";
 import { CheckTutorial, type TutorialStep } from "./CheckTutorial";
-import { ExampleQuestion, TaskExampleIntro, TaskExampleSuccess, type TaskExample } from "./TaskExampleTutorial";
+import { ExampleQuestion, TaskExampleSuccess, type TaskExample } from "./TaskExampleTutorial";
 
 type Evidence = {
   text: string;
@@ -249,8 +249,6 @@ function App() {
     [newOpen, setNewOpen] = useState(false),
     [newTutorial, setNewTutorial] = useState(false),
     [example, setExample] = useState<TaskExample | null>(null),
-    [exampleBusy, setExampleBusy] = useState(false),
-    [exampleError, setExampleError] = useState(""),
     [exampleSuccess, setExampleSuccess] = useState<{ article: string; difference: string } | null>(null),
     [fixturesOpen, setFixturesOpen] = useState(false),
     [detail, setDetail] = useState<Metric | null>(null),
@@ -258,7 +256,6 @@ function App() {
       null,
     );
   const shell = useRef<HTMLDivElement>(null);
-  const exampleRequest = useRef(0);
   const selection = useRef(selected);
   selection.current = selected;
   const detailDialog = useDialog(() => setDetail(null), false, !!detail);
@@ -267,25 +264,19 @@ function App() {
     setNewOpen(true);
   };
   const cancelExample = () => {
-    exampleRequest.current++;
     setExample(null);
-    setExampleBusy(false);
-    setExampleError("");
     setDetail(null);
     setSource(null);
   };
   const openExample = () => {
-    exampleRequest.current++;
-    setExample({ step: 0, caseId: null, article: null, reportOpened: false, primaryDocument: null, answer: null });
-    setExampleBusy(false);
-    setExampleError("");
+    // Preparation uses the ordinary upload form before the result steps begin.
+    setExample({ step: -1, caseId: null, article: null, reportOpened: false, primaryDocument: null, answer: null });
     setExampleSuccess(null);
     setNewOpen(false);
     setFixturesOpen(false);
     setDetail(null);
     setSource(null);
   };
-  useEffect(() => () => { exampleRequest.current++; }, []);
   const refresh = async () => {
     setCases(await api<Case[]>("/cases"));
     if (selected && selection.current === selected) {
@@ -355,25 +346,9 @@ function App() {
   const exampleCase = !!example?.caseId && example.caseId === current?.id && selected === example.caseId;
   const exampleMetric = exampleCase ? result?.metrics.find((m) => m.status === "MISMATCH" && m.code !== "total") : undefined;
   const exampleReady = !!(exampleMetric?.report_evidence && exampleMetric.terms.length && report && current?.status === "completed");
-  const launchExample = async () => {
-    if (!example || example.caseId || exampleBusy) return;
-    const request = exampleRequest.current;
-    setExampleBusy(true);
-    setExampleError("");
-    try {
-      const created = await api<{ case_id: string; run_id: string }>("/demo", { method: "POST" });
-      if (request !== exampleRequest.current) return;
-      setExample((value) => value ? { ...value, caseId: created.case_id } : value);
-      choose(created.case_id);
-    } catch (e) {
-      if (request === exampleRequest.current) setExampleError((e as Error).message);
-    } finally {
-      if (request === exampleRequest.current) setExampleBusy(false);
-    }
-  };
   const openMetric = (metric: Metric) => {
     setDetail(metric);
-    if (exampleCase && example?.step === 3 && metric.code === exampleMetric?.code) {
+    if (exampleCase && example?.step === 2 && metric.code === exampleMetric?.code) {
       setExample((value) => value ? { ...value, article: metric.code } : value);
     }
   };
@@ -382,10 +357,10 @@ function App() {
     if (doc) {
       setSource({ doc, evidence });
       if (exampleCase && detail?.code === exampleMetric?.code && evidence) {
-        if (example?.step === 4 && doc.role === "report" && evidence === detail?.report_evidence) {
+        if (example?.step === 3 && doc.role === "report" && evidence === detail?.report_evidence) {
           setExample((value) => value ? { ...value, reportOpened: true } : value);
         }
-        if (example?.step === 5 && doc.role === "primary" && detail?.terms.some((term) => term.document_id === id)) {
+        if (example?.step === 4 && doc.role === "primary" && detail?.terms.some((term) => term.document_id === id)) {
           setExample((value) => value ? { ...value, primaryDocument: id } : value);
         }
       }
@@ -395,17 +370,15 @@ function App() {
   const correctAnswer = !Number.isFinite(numericDelta) ? null : numericDelta > 0 ? "report" : numericDelta < 0 ? "primary" : "equal";
   const answerCorrect = !!correctAnswer && example?.answer === correctAnswer;
   const exampleSteps: TutorialStep[] = [
-    { target: "example-launch", title: "Запустите готовый комплект", text: "Нажмите «Запустить пример». Приложение загрузит исходный КФЗ и первичные документы из комплекта задания и начнёт обычную сверку.",
-      complete: !!example?.caseId && !exampleBusy, waitingText: exampleError || (exampleBusy ? "Готовим комплект…" : "Сначала нажмите выделенную кнопку."), successText: "Пример запущен. Теперь дождёмся расчёта." },
     { target: "example-status", title: "Дождитесь результата", text: "Документы обрабатываются. Следующий шаг откроется, когда будут готовы суммы и источники расчёта.",
       complete: exampleReady, waitingText: current?.status === "failed" ? "Обработка прервана. Нажмите «Повторить обработку» или выйдите из обучения." : "Дождитесь завершения сверки.", successText: "Расчёт готов — можно исследовать результат." },
     { target: "example-filter", title: "Оставьте только расхождения", text: "Выберите фильтр «Расхождения», чтобы увидеть показатели, где сумма отчёта отличается от суммы по документам.",
       complete: filter === "MISMATCH", waitingText: "Нажмите «Расхождения» в выделенном фильтре.", successText: "Фильтр выбран. Найдём проблемную статью." },
     { target: detail?.code === exampleMetric?.code && detail ? "example-calculation" : "example-article", title: "Откройте статью с расхождением", text: "Нажмите на выделенную статью затрат. В её расчёте видны исходная сумма КФЗ, сумма по документам и разница.",
       complete: !!example?.article && example.article === exampleMetric?.code, waitingText: "Откройте выделенную строку статьи.", successText: "Расчёт статьи открыт. Проверим источники сумм." },
-    { target: source?.doc.role === "report" ? "example-document" : "example-report", title: "Проверьте сумму в КФЗ", text: "Нажмите «Посмотреть значение в КФЗ». Откроется скан с фрагментом, из которого прочитана сумма отчёта.",
+    { target: source?.doc.role === "report" ? "example-evidence" : "example-report", focusPadding: source?.doc.role === "report" ? 24 : undefined, title: "Проверьте сумму в КФЗ", text: "Нажмите «Посмотреть значение в КФЗ». Откроется скан с фрагментом, из которого прочитана сумма отчёта.",
       complete: !!example?.reportOpened, waitingText: "Откройте исходный отчёт по выделенной кнопке.", successText: "КФЗ открыт. Теперь проверим подтверждающий документ." },
-    { target: source?.doc.role === "primary" ? "example-document" : "example-primary", title: "Откройте первичный документ", text: "Откройте выделенное слагаемое расчёта. Это одна операция: полная сумма по первичке складывается из всех учтённых документов статьи.",
+    { target: source?.doc.role === "primary" ? "example-evidence" : "example-primary", focusPadding: source?.doc.role === "primary" ? 24 : undefined, title: "Откройте первичный документ", text: "Откройте выделенное слагаемое расчёта. Это одна операция: полная сумма по первичке складывается из всех учтённых документов статьи.",
       complete: !!example?.primaryDocument, waitingText: "Нажмите на выделенный документ в расчёте.", successText: "Подтверждающий документ открыт. Осталось сравнить суммы." },
     { target: "example-calculation", title: "Что означает расхождение?", text: "Сравните сумму отчёта с суммой по документам. Выберите верное объяснение — после этого можно завершить обучение.",
       complete: answerCorrect, waitingText: example?.answer ? "Пока неверно. Разница — сумма в отчёте минус сумма по документам. Сравните значения ещё раз." : "Выберите ответ ниже.",
@@ -419,23 +392,23 @@ function App() {
     setExample({ ...example, step });
     setSource(null);
     setTab("checks");
-    if (step <= 2) setDetail(null);
-    if (step === 2 && example.step < 2) setFilter("all");
-    if (step >= 3) {
+    if (step <= 1) setDetail(null);
+    if (step === 1 && example.step < 1) setFilter("all");
+    if (step >= 2) {
       setFilter("MISMATCH");
-      setDetail(step > 3 || example.article ? exampleMetric || null : null);
+      setDetail(step > 2 || example.article ? exampleMetric || null : null);
     }
-    if (step === 4 && example.reportOpened && report && exampleMetric?.report_evidence) {
+    if (step === 3 && example.reportOpened && report && exampleMetric?.report_evidence) {
       setSource({ doc: report, evidence: exampleMetric.report_evidence });
     }
-    if (step === 5 && example.primaryDocument && exampleMetric) {
+    if (step === 4 && example.primaryDocument && exampleMetric) {
       const doc = docs.find((d) => d.id === example.primaryDocument);
       const term = exampleMetric.terms.find((t) => t.document_id === example.primaryDocument);
       if (doc && term) setSource({ doc, evidence: term.evidence });
     }
   };
   const finishExample = () => {
-    if (!example || example.step !== 6 || !exampleReady || !example.article || !example.reportOpened || !example.primaryDocument || !answerCorrect) return;
+    if (!example || example.step !== 5 || !exampleReady || !example.article || !example.reportOpened || !example.primaryDocument || !answerCorrect) return;
     const completed = { article: example.article, difference: rub(exampleMetric?.delta ?? null) };
     cancelExample();
     setExampleSuccess(completed);
@@ -1421,9 +1394,11 @@ function App() {
           }}
         />
       )}
-      {example?.step === 0 && <TaskExampleIntro busy={exampleBusy} started={!!example.caseId} error={exampleError}
-        onStart={launchExample} onClose={cancelExample} />}
-      {example && <CheckTutorial root={shell} steps={exampleSteps} step={example.step} label="Учебный пример" exitLabel="Выйти"
+      {example?.step === -1 && <NewCaseModal training onClose={cancelExample} onDone={(id) => {
+        setExample((value) => value ? { ...value, caseId: id, step: 0 } : value);
+        choose(id);
+      }} />}
+      {example && example.step >= 0 && <CheckTutorial root={shell} steps={exampleSteps} step={example.step} stepOffset={5} totalSteps={11} label="Учебный пример" exitLabel="Выйти"
         onStepChange={changeExampleStep} onClose={cancelExample} onFinish={finishExample} />}
       {exampleSuccess && <TaskExampleSuccess {...exampleSuccess} onClose={() => setExampleSuccess(null)}
         onNew={() => { setExampleSuccess(null); openNew(); }} />}
@@ -1926,24 +1901,51 @@ function NewCaseModal({
   onClose,
   onDone,
   initialTutorial = false,
+  training = false,
 }: {
   onClose: () => void;
   onDone: (id: string) => void;
   initialTutorial?: boolean;
+  training?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
   const [tutorialOpen, setTutorialOpen] = useState(initialTutorial);
+  const [trainingStep, setTrainingStep] = useState(0);
+  const [completePackage, setCompletePackage] = useState(false);
   const [reportFiles, setReportFiles] = useState<File[]>([]);
   const [primaryFiles, setPrimaryFiles] = useState<File[]>([]);
   const reportContext = useReportContext();
   const reportInput = useRef<HTMLInputElement>(null);
   const primaryInput = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const attempt = useRef<{ id: string; signature: string } | null>(null);
   const dialog = useDialog(onClose, busy);
+  const validFile = (file: File, report: boolean) => !!file.size && file.size <= 25 * 1024 * 1024 &&
+    (report ? /\.(pdf|png|jpe?g)$/i : /\.(pdf|docx|xlsx|png|jpe?g)$/i).test(file.name);
+  const reportReady = reportFiles.length === 1 && validFile(reportFiles[0], true);
+  const scopeReady = reportContext.values.contract.trim() === "24/03/15-01" &&
+    Number(reportContext.values.stage) === 3 && reportContext.values.period_start === "2026-01-01" &&
+    reportContext.values.period_end === "2026-05-31";
+  const primaryReady = primaryFiles.length === 22 && primaryFiles.every((file) => validFile(file, false));
+  const preparationReady = reportReady && scopeReady && primaryReady && completePackage;
+  const trainingSteps: TutorialStep[] = [
+    { target: "report", title: "Выберите учебный КФЗ", text: "Скачайте и распакуйте комплект или откройте task/data. Нажмите на выделенную область и выберите файл «01_Карточка_учета_фактических_затрат_этап_3.pdf» из папки report.",
+      content: <a className="button tutorial-kit-link" href="/api/demo/documents.zip"><ArrowDownToLine size={16} />Скачать учебный комплект</a>,
+      complete: reportReady, waitingText: "Выберите один непустой PDF, PNG или JPEG до 25 МБ.", successText: "Отчёт выбран. Проверим, какую строку будем сверять." },
+    { target: "scope", title: "Укажите строку учебного отчёта", text: "Проверьте договор 24/03/15-01 и этап 3. Для строки «3 этап, 2026 г.» задайте период 01.01.2026–31.05.2026. Общий период в шапке КФЗ шире, поэтому здесь нужны именно эти даты.",
+      complete: scopeReady, waitingText: "Укажите договор, этап и обе даты из задания.", successText: "Параметры учебной строки указаны верно." },
+    { target: "primary", title: "Выберите первичные документы", text: "В выделенной области выберите все 22 файла из папки primary скачанного комплекта. В task/data это документы с префиксами 02–15. README и таблица с ответами не нужны.",
+      complete: primaryReady, waitingText: `Выбрано ${primaryFiles.length} из 22 документов. Нужны непустые файлы поддерживаемых форматов до 25 МБ каждый.`, successText: "Все 22 первичных документа выбраны." },
+    { target: "complete", title: "Подтвердите полноту комплекта", text: "В учебном комплекте представлены все первичные документы за выбранный период. Отметьте это, чтобы сверка могла сделать вывод о полной сумме расходов.",
+      complete: completePackage, waitingText: "Поставьте галочку «Все первичные документы за период загружены».", successText: "Комплект отмечен как полный." },
+    { target: "submit", title: "Запустите учебную сверку", text: "Документы и параметры готовы. Нажмите «Начать сверку»: файлы загрузятся, после обработки продолжим обучение на результатах.",
+      complete: preparationReady && !busy, waitingText: error || (busy ? progress : "Вернитесь назад и проверьте документы, параметры и полноту комплекта."), successText: "Всё готово к запуску." },
+  ];
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (busy || (training && (trainingStep !== 4 || !preparationReady))) return;
     const form = new FormData(e.currentTarget);
     setError("");
     const allowedReport = /\.(pdf|png|jpe?g)$/i;
@@ -2057,16 +2059,16 @@ function NewCaseModal({
         ref={dialog}
         role="dialog"
         aria-modal="true"
-        aria-label="Новая проверка"
+        aria-label={training ? "Учебная проверка" : "Новая проверка"}
       >
         <header className="new-case-heading">
-          <span className="eyebrow">СВЕРКА ПО ВАШИМ ДОКУМЕНТАМ</span>
-          <h2>Новая проверка</h2>
-          <p>Добавьте документы и укажите, какую строку отчёта проверить.</p>
-          <button type="button" className="tutorial-start" data-tutorial-start
+          <span className="eyebrow">{training ? "ПРАКТИКА С ПОДСКАЗКАМИ" : "СВЕРКА ПО ВАШИМ ДОКУМЕНТАМ"}</span>
+          <h2>{training ? "Проверим учебный комплект" : "Новая проверка"}</h2>
+          <p>{training ? "Выберите КФЗ и 22 первичных документа из исходного задания. Каждый шаг откроется после выполнения предыдущего." : "Добавьте документы и укажите, какую строку отчёта проверить."}</p>
+          {!training && <button type="button" className="tutorial-start" data-tutorial-start
             disabled={busy} onClick={() => setTutorialOpen(true)}>
             <CircleHelp size={16} />Показать подсказки
-          </button>
+          </button>}
           <button
             className="close"
             disabled={busy}
@@ -2076,7 +2078,7 @@ function NewCaseModal({
             <X />
           </button>
         </header>
-        <form onSubmit={submit} className="new-case-form">
+        <form ref={formRef} onSubmit={submit} className="new-case-form">
           <div className="new-case-fields">
             <fieldset disabled={busy}>
               <legend>
@@ -2208,7 +2210,7 @@ function NewCaseModal({
                 <input
                   name="title"
                   required
-                  defaultValue="Сверка затрат"
+                  defaultValue={training ? "Учебная сверка · этап 3" : "Сверка затрат"}
                   maxLength={200}
                 />
               </label>
@@ -2265,7 +2267,7 @@ function NewCaseModal({
                 </label>
               </div>
               <label className="checkbox" data-tutorial="complete">
-                <input name="complete" type="checkbox" />
+                <input name="complete" type="checkbox" checked={completePackage} onChange={(e) => setCompletePackage(e.target.checked)} />
                 <span>
                   Все первичные документы за период загружены
                   <small>
@@ -2288,7 +2290,7 @@ function NewCaseModal({
                 ? progress
                 : `${reportFiles.length ? "Отчёт выбран" : "Отчёт не выбран"} · Первичных документов: ${primaryFiles.length}`}
             </span>
-            <button className="button primary" type="submit" disabled={busy} data-tutorial="submit">
+            <button className="button primary" type="submit" disabled={busy || (training && (trainingStep !== 4 || !preparationReady))} data-tutorial="submit">
               {busy ? (
                 <Loader2 size={18} className="spin" />
               ) : (
@@ -2299,6 +2301,13 @@ function NewCaseModal({
           </div>
         </form>
         {tutorialOpen && <CheckTutorial root={dialog} onClose={() => setTutorialOpen(false)} />}
+        {training && <CheckTutorial root={dialog} steps={trainingSteps} step={trainingStep} totalSteps={11}
+          label="Учебный пример" exitLabel="Выйти" finishLabel="Начать сверку"
+          onClose={() => { if (!busy) onClose(); }}
+          onStepChange={(next) => {
+            if (!busy && (next < trainingStep || trainingSteps[trainingStep].complete)) setTrainingStep(next);
+          }}
+          onFinish={() => formRef.current?.requestSubmit()} />}
       </section>
     </div>
   );
@@ -2322,6 +2331,12 @@ function SourcePanel({
     [imageError, setImageError] = useState(false);
   const dialog = useDialog(onClose, saving);
   const image = /\.(pdf|png|jpe?g)$/i.test(doc.name);
+  const matchesEvidence = (fragment: Evidence) => !!(
+    (ev?.range && fragment.sheet === ev.sheet && rangeContains(ev.range, fragment.range || "")) ||
+    (ev?.table && fragment.table === ev.table && fragment.row === ev.row && fragment.column === ev.column) ||
+    (ev?.paragraph && fragment.paragraph === ev.paragraph));
+  const highlightedFragment = doc.extraction?.fragments?.findIndex(matchesEvidence) ?? -1;
+  const hasVisualEvidence = image ? !!ev?.bbox && !imageError : highlightedFragment >= 0;
   const review = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
@@ -2374,7 +2389,7 @@ function SourcePanel({
             <X />
           </button>
         </div>
-        <div className="source-title" data-tutorial="example-document">
+        <div className="source-title">
           <FileText size={22} />
           <div>
             <h2>{doc.name}</h2>
@@ -2405,6 +2420,7 @@ function SourcePanel({
                   {ev?.bbox && (
                     <span
                       className="evidence-highlight"
+                      data-tutorial="example-evidence"
                       style={{
                         left: ev.bbox[0] * 100 + "%",
                         top: ev.bbox[1] * 100 + "%",
@@ -2421,18 +2437,8 @@ function SourcePanel({
                 {doc.extraction?.fragments?.map((f, i) => (
                   <div
                     key={i}
-                    className={
-                      "fragment " +
-                      ((ev?.range &&
-                        f.sheet === ev.sheet &&
-                        rangeContains(ev.range, f.range || "")) ||
-                      (ev?.table &&
-                        f.table === ev.table &&
-                        f.row === ev.row &&
-                        f.column === ev.column)
-                        ? "highlight"
-                        : "")
-                    }
+                    className={"fragment " + (matchesEvidence(f) ? "highlight" : "")}
+                    data-tutorial={i === highlightedFragment ? "example-evidence" : undefined}
                   >
                     <small>
                       {f.sheet
@@ -2450,7 +2456,7 @@ function SourcePanel({
           <aside className="source-facts">
             <h3>Подтверждающий фрагмент</h3>
             {ev ? (
-              <blockquote>{ev.text}</blockquote>
+              <blockquote data-tutorial={!hasVisualEvidence ? "example-evidence" : undefined}>{ev.text}</blockquote>
             ) : (
               <p className="muted">
                 Выберите слагаемое в расчёте для перехода к конкретному

@@ -300,6 +300,20 @@ def export(case_id: str, run_id: str, format: Literal['json', 'csv'] = 'json'):
         return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="reconciliation-{run.id}.{format}"'})
 
 
+@app.get('/api/demo/documents.zip')
+def demo_documents():
+    manifest = json.loads((ROOT/'demo'/'manifest.json').read_text(encoding='utf-8'))
+    files = [(DEMO_DIR/item['name'], item['role']) for item in manifest['files']]
+    if any(not path.is_file() for path, _ in files):
+        raise HTTPException(404, 'Демонстрационные документы не установлены полностью')
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as kit:
+        for path, role in files:
+            kit.write(path, f'{role}/{path.name}')
+    return Response(archive.getvalue(), media_type='application/zip',
+                    headers={'Content-Disposition': 'attachment; filename="sverka-training-documents.zip"'})
+
+
 @app.post('/api/demo', status_code=201)
 def demo():
     manifest = json.loads((ROOT/'demo'/'manifest.json').read_text(encoding='utf-8'))
