@@ -96,3 +96,120 @@
   gap: 6px;
   font-size: 12px;
 }
+.tutorial-actions .button:disabled {
+  cursor: not-allowed;
+}
+.tutorial-card .tutorial-step-status {
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #f2f5fa;
+  color: #53677e;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 12px 0 16px;
+}
+.tutorial-card .tutorial-step-status.complete {
+  background: #edf7f0;
+  color: #28704d;
+}
+.task-example-intro > .button {
+  width: 100%;
+  justify-content: center;
+}
+.example-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  border: 1px solid #cbd8ee;
+  background: #f2f6ff;
+  border-radius: 9px;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+.example-status strong {
+  font-size: 13px;
+}
+.example-status > span {
+  color: #526b89;
+  font-size: 12px;
+}
+.example-question dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 22px;
+  margin: 12px 0;
+}
+.example-question dt {
+  color: #607086;
+  font-size: 11px;
+}
+.example-question dd {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.example-answers {
+  display: grid;
+  gap: 6px;
+}
+.example-answers .button {
+  font-size: 12px;
+  min-height: 34px;
+  justify-content: flex-start;
+}
+.example-answers .button[aria-pressed="true"] {
+  background: #e8eeff;
+  border-color: #6484d9;
+}
+.example-success-overlay {
+  z-index: 110;
+}
+.example-success {
+  text-align: center;
+  z-index: 1;
+}
+.example-success-icon {
+  display: inline-flex;
+  padding: 17px;
+  background: #e8f5ec;
+  color: #278166;
+  border-radius: 50%;
+  margin: 8px 0 12px;
+}
+.example-success-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.example-confetti {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+.example-confetti i {
+  position: absolute;
+  top: -24px;
+  width: 9px;
+  height: 15px;
+  border-radius: 2px;
+  animation: example-confetti-fall 3.6s ease-in both;
+}
+@keyframes example-confetti-fall {
+  0% { transform: translate3d(0, -24px, 0) rotate(0); opacity: 0; }
+  8% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translate3d(var(--drift), 110vh, 0) rotate(var(--turn)); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .example-confetti { z-index: 0; }
+  .example-confetti i {
+    animation: none;
+    top: var(--rest-top);
+    transform: rotate(var(--rest-turn));
+    opacity: 0.7;
+  }
+}

@@ -14,6 +14,7 @@ import {
   Files,
   FileText,
   FolderOpen,
+  GraduationCap,
   History,
   Layers3,
   Loader2,
@@ -30,7 +31,8 @@ import "./ux.css";
 import { FixtureBatchResults, type FixtureBatch } from "./FixtureBatchResults";
 import { useDialog } from "./useDialog";
 import { useReportContext } from "./useReportContext";
-import { CheckTutorial } from "./CheckTutorial";
+import { CheckTutorial, type TutorialStep } from "./CheckTutorial";
+import { ExampleQuestion, TaskExampleIntro, TaskExampleSuccess, type TaskExample } from "./TaskExampleTutorial";
 
 type Evidence = {
   text: string;
@@ -246,11 +248,17 @@ function App() {
     [error, setError] = useState(""),
     [newOpen, setNewOpen] = useState(false),
     [newTutorial, setNewTutorial] = useState(false),
+    [example, setExample] = useState<TaskExample | null>(null),
+    [exampleBusy, setExampleBusy] = useState(false),
+    [exampleError, setExampleError] = useState(""),
+    [exampleSuccess, setExampleSuccess] = useState<{ article: string; difference: string } | null>(null),
     [fixturesOpen, setFixturesOpen] = useState(false),
     [detail, setDetail] = useState<Metric | null>(null),
     [source, setSource] = useState<{ doc: Doc; evidence?: Evidence } | null>(
       null,
     );
+  const shell = useRef<HTMLDivElement>(null);
+  const exampleRequest = useRef(0);
   const selection = useRef(selected);
   selection.current = selected;
   const detailDialog = useDialog(() => setDetail(null), false, !!detail);
@@ -258,6 +266,26 @@ function App() {
     setNewTutorial(tutorial);
     setNewOpen(true);
   };
+  const cancelExample = () => {
+    exampleRequest.current++;
+    setExample(null);
+    setExampleBusy(false);
+    setExampleError("");
+    setDetail(null);
+    setSource(null);
+  };
+  const openExample = () => {
+    exampleRequest.current++;
+    setExample({ step: 0, caseId: null, article: null, reportOpened: false, primaryDocument: null, answer: null });
+    setExampleBusy(false);
+    setExampleError("");
+    setExampleSuccess(null);
+    setNewOpen(false);
+    setFixturesOpen(false);
+    setDetail(null);
+    setSource(null);
+  };
+  useEffect(() => () => { exampleRequest.current++; }, []);
   const refresh = async () => {
     setCases(await api<Case[]>("/cases"));
     if (selected && selection.current === selected) {
@@ -324,9 +352,93 @@ function App() {
   const result = current?.result;
   const docs = result?.documents || current?.documents || [];
   const report = docs.find((d) => d.role === "report");
+  const exampleCase = !!example?.caseId && example.caseId === current?.id && selected === example.caseId;
+  const exampleMetric = exampleCase ? result?.metrics.find((m) => m.status === "MISMATCH" && m.code !== "total") : undefined;
+  const exampleReady = !!(exampleMetric?.report_evidence && exampleMetric.terms.length && report && current?.status === "completed");
+  const launchExample = async () => {
+    if (!example || example.caseId || exampleBusy) return;
+    const request = exampleRequest.current;
+    setExampleBusy(true);
+    setExampleError("");
+    try {
+      const created = await api<{ case_id: string; run_id: string }>("/demo", { method: "POST" });
+      if (request !== exampleRequest.current) return;
+      setExample((value) => value ? { ...value, caseId: created.case_id } : value);
+      choose(created.case_id);
+    } catch (e) {
+      if (request === exampleRequest.current) setExampleError((e as Error).message);
+    } finally {
+      if (request === exampleRequest.current) setExampleBusy(false);
+    }
+  };
+  const openMetric = (metric: Metric) => {
+    setDetail(metric);
+    if (exampleCase && example?.step === 3 && metric.code === exampleMetric?.code) {
+      setExample((value) => value ? { ...value, article: metric.code } : value);
+    }
+  };
   const showSource = (id: string, evidence?: Evidence) => {
     const doc = docs.find((d) => d.id === id);
-    if (doc) setSource({ doc, evidence });
+    if (doc) {
+      setSource({ doc, evidence });
+      if (exampleCase && detail?.code === exampleMetric?.code && evidence) {
+        if (example?.step === 4 && doc.role === "report" && evidence === detail?.report_evidence) {
+          setExample((value) => value ? { ...value, reportOpened: true } : value);
+        }
+        if (example?.step === 5 && doc.role === "primary" && detail?.terms.some((term) => term.document_id === id)) {
+          setExample((value) => value ? { ...value, primaryDocument: id } : value);
+        }
+      }
+    }
+  };
+  const numericDelta = exampleMetric?.delta == null ? NaN : Number(exampleMetric.delta);
+  const correctAnswer = !Number.isFinite(numericDelta) ? null : numericDelta > 0 ? "report" : numericDelta < 0 ? "primary" : "equal";
+  const answerCorrect = !!correctAnswer && example?.answer === correctAnswer;
+  const exampleSteps: TutorialStep[] = [
+    { target: "example-launch", title: "Запустите готовый комплект", text: "Нажмите «Запустить пример». Приложение загрузит исходный КФЗ и первичные документы из комплекта задания и начнёт обычную сверку.",
+      complete: !!example?.caseId && !exampleBusy, waitingText: exampleError || (exampleBusy ? "Готовим комплект…" : "Сначала нажмите выделенную кнопку."), successText: "Пример запущен. Теперь дождёмся расчёта." },
+    { target: "example-status", title: "Дождитесь результата", text: "Документы обрабатываются. Следующий шаг откроется, когда будут готовы суммы и источники расчёта.",
+      complete: exampleReady, waitingText: current?.status === "failed" ? "Обработка прервана. Нажмите «Повторить обработку» или выйдите из обучения." : "Дождитесь завершения сверки.", successText: "Расчёт готов — можно исследовать результат." },
+    { target: "example-filter", title: "Оставьте только расхождения", text: "Выберите фильтр «Расхождения», чтобы увидеть показатели, где сумма отчёта отличается от суммы по документам.",
+      complete: filter === "MISMATCH", waitingText: "Нажмите «Расхождения» в выделенном фильтре.", successText: "Фильтр выбран. Найдём проблемную статью." },
+    { target: detail?.code === exampleMetric?.code && detail ? "example-calculation" : "example-article", title: "Откройте статью с расхождением", text: "Нажмите на выделенную статью затрат. В её расчёте видны исходная сумма КФЗ, сумма по документам и разница.",
+      complete: !!example?.article && example.article === exampleMetric?.code, waitingText: "Откройте выделенную строку статьи.", successText: "Расчёт статьи открыт. Проверим источники сумм." },
+    { target: source?.doc.role === "report" ? "example-document" : "example-report", title: "Проверьте сумму в КФЗ", text: "Нажмите «Посмотреть значение в КФЗ». Откроется скан с фрагментом, из которого прочитана сумма отчёта.",
+      complete: !!example?.reportOpened, waitingText: "Откройте исходный отчёт по выделенной кнопке.", successText: "КФЗ открыт. Теперь проверим подтверждающий документ." },
+    { target: source?.doc.role === "primary" ? "example-document" : "example-primary", title: "Откройте первичный документ", text: "Откройте выделенное слагаемое расчёта. Это одна операция: полная сумма по первичке складывается из всех учтённых документов статьи.",
+      complete: !!example?.primaryDocument, waitingText: "Нажмите на выделенный документ в расчёте.", successText: "Подтверждающий документ открыт. Осталось сравнить суммы." },
+    { target: "example-calculation", title: "Что означает расхождение?", text: "Сравните сумму отчёта с суммой по документам. Выберите верное объяснение — после этого можно завершить обучение.",
+      complete: answerCorrect, waitingText: example?.answer ? "Пока неверно. Разница — сумма в отчёте минус сумма по документам. Сравните значения ещё раз." : "Выберите ответ ниже.",
+      successText: "Верно! Вы нашли расхождение и проверили его источники.",
+      content: <ExampleQuestion actual={exampleMetric?.actual ?? null} expected={exampleMetric?.expected ?? null}
+        answer={example?.answer ?? null} onAnswer={(answer) => setExample((value) => value ? { ...value, answer } : value)} /> },
+  ];
+  const changeExampleStep = (step: number) => {
+    if (!example || step < 0 || step >= exampleSteps.length || Math.abs(step - example.step) !== 1) return;
+    if (step > example.step && exampleSteps[example.step].complete === false) return;
+    setExample({ ...example, step });
+    setSource(null);
+    setTab("checks");
+    if (step <= 2) setDetail(null);
+    if (step === 2 && example.step < 2) setFilter("all");
+    if (step >= 3) {
+      setFilter("MISMATCH");
+      setDetail(step > 3 || example.article ? exampleMetric || null : null);
+    }
+    if (step === 4 && example.reportOpened && report && exampleMetric?.report_evidence) {
+      setSource({ doc: report, evidence: exampleMetric.report_evidence });
+    }
+    if (step === 5 && example.primaryDocument && exampleMetric) {
+      const doc = docs.find((d) => d.id === example.primaryDocument);
+      const term = exampleMetric.terms.find((t) => t.document_id === example.primaryDocument);
+      if (doc && term) setSource({ doc, evidence: term.evidence });
+    }
+  };
+  const finishExample = () => {
+    if (!example || example.step !== 6 || !exampleReady || !example.article || !example.reportOpened || !example.primaryDocument || !answerCorrect) return;
+    const completed = { article: example.article, difference: rub(exampleMetric?.delta ?? null) };
+    cancelExample();
+    setExampleSuccess(completed);
   };
   const primaryMetrics =
     result?.metrics.filter((m) => m.code !== "total") || [];
@@ -374,7 +486,7 @@ function App() {
     ) || [];
 
   return (
-    <div className="shell">
+    <div className="shell" ref={shell}>
       <aside className="sidebar">
         <a
           className="brand"
@@ -499,6 +611,9 @@ function App() {
               </p>
             </div>
             <div className="heading-actions">
+              <button className="button example-trigger" onClick={openExample} title="Учебный пример из исходного задания">
+                <GraduationCap size={17} />Учебный пример
+              </button>
               <button className="button" aria-label="Как сделать проверку"
                 title="Как сделать проверку" onClick={() => openNew(true)}>
                 <CircleHelp size={17} />
@@ -531,6 +646,15 @@ function App() {
               </button>
             </div>
           )}
+          {example?.caseId && selected === example.caseId && <section className="example-status" data-tutorial="example-status" aria-label="Учебная проверка">
+            <strong>Учебный комплект исходного задания</strong>
+            <span role="status">{exampleReady ? "Проверка завершена. Суммы и источники готовы."
+              : current?.status === "failed" ? "Не удалось завершить обработку."
+              : current?.status === "completed" ? "В результате не найдены все данные для учебного примера."
+              : "Выполняется сверка документов…"}</span>
+            {(current?.status === "failed" || (current?.status === "completed" && !exampleReady)) &&
+              <button className="button" disabled={busy} onClick={start}>Повторить обработку</button>}
+          </section>}
           {!current && selected ? (
             <div className="panel empty-small" role="status">
               <Loader2 className="spin" />
@@ -876,6 +1000,7 @@ function App() {
                         <div
                           className="filters"
                           aria-label="Фильтр результатов"
+                          data-tutorial="example-filter"
                         >
                           {[
                             ["all", "Все"],
@@ -915,12 +1040,13 @@ function App() {
                                     ? "has-issue "
                                     : "") + (m.code === "total" ? "total" : "")
                                 }
-                                onClick={() => setDetail(m)}
+                                data-tutorial={m.code === exampleMetric?.code ? "example-article" : undefined}
+                                onClick={() => openMetric(m)}
                                 tabIndex={0}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter" || e.key === " ") {
                                     e.preventDefault();
-                                    setDetail(m);
+                                    openMetric(m);
                                   }
                                 }}
                               >
@@ -1147,10 +1273,7 @@ function App() {
             </>
           )}
           <footer>
-            <span>
-              Сверка<span className="footer-dot">·</span>Каждый результат связан
-              с источником
-            </span>
+              <span>Сверка</span>
             <span>MVP 1.0</span>
           </footer>
         </div>
@@ -1197,7 +1320,7 @@ function App() {
             <span className="eyebrow">РАСЧЁТ ПОКАЗАТЕЛЯ · {detail.code}</span>
             <h2>{detail.name}</h2>
             <Badge status={detail.status} />
-            <div className="detail-values">
+            <div className="detail-values" data-tutorial="example-calculation">
               <div>
                 <small>В отчёте</small>
                 <strong>{rub(detail.actual)} ₽</strong>
@@ -1223,6 +1346,7 @@ function App() {
             {report && detail.report_evidence && (
               <button
                 className="report-link"
+                data-tutorial="example-report"
                 onClick={() => showSource(report.id, detail.report_evidence)}
               >
                 <FileText size={18} />
@@ -1238,7 +1362,7 @@ function App() {
                     <button
                       className="term"
                       key={m.code}
-                      onClick={() => setDetail(m)}
+                      onClick={() => openMetric(m)}
                     >
                       <div>
                         <strong>
@@ -1250,9 +1374,10 @@ function App() {
                       <ChevronRight size={17} />
                     </button>
                   ))
-              : detail.terms.map((t) => (
+              : detail.terms.map((t, index) => (
                   <button
                     className="term"
+                    data-tutorial={index === 0 ? "example-primary" : undefined}
                     key={t.document_id}
                     onClick={() => showSource(t.document_id, t.evidence)}
                   >
@@ -1296,6 +1421,12 @@ function App() {
           }}
         />
       )}
+      {example?.step === 0 && <TaskExampleIntro busy={exampleBusy} started={!!example.caseId} error={exampleError}
+        onStart={launchExample} onClose={cancelExample} />}
+      {example && <CheckTutorial root={shell} steps={exampleSteps} step={example.step} label="Учебный пример" exitLabel="Выйти"
+        onStepChange={changeExampleStep} onClose={cancelExample} onFinish={finishExample} />}
+      {exampleSuccess && <TaskExampleSuccess {...exampleSuccess} onClose={() => setExampleSuccess(null)}
+        onNew={() => { setExampleSuccess(null); openNew(); }} />}
     </div>
   );
 }
@@ -2243,7 +2374,7 @@ function SourcePanel({
             <X />
           </button>
         </div>
-        <div className="source-title">
+        <div className="source-title" data-tutorial="example-document">
           <FileText size={22} />
           <div>
             <h2>{doc.name}</h2>

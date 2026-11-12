@@ -1,8 +1,18 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ArrowLeft, ArrowRight, Check, X } from "lucide-react";
 import "./tutorial.css";
 
-const steps = [
+export type TutorialStep = {
+  target: string;
+  title: string;
+  text: string;
+  complete?: boolean;
+  waitingText?: string;
+  successText?: string;
+  content?: ReactNode;
+};
+
+const overviewSteps: TutorialStep[] = [
   {
     target: "report",
     title: "Загрузите отчёт КФЗ",
@@ -34,21 +44,35 @@ type Bounds = { left: number; top: number; right: number; bottom: number };
 type Position = { focus: Bounds; left: number; top: number };
 const focusable = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]';
 
-export function CheckTutorial({ root, onClose }: {
+export function CheckTutorial({ root, onClose, steps = overviewSteps, step: controlledStep, onStepChange, onFinish,
+  label = "Как сделать проверку", exitLabel = "Пропустить",
+}: {
   root: RefObject<HTMLElement | null>;
   onClose: () => void;
+  steps?: TutorialStep[];
+  step?: number;
+  onStepChange?: (step: number) => void;
+  onFinish?: () => void;
+  label?: string;
+  exitLabel?: string;
 }) {
-  const [step, setStep] = useState(0);
+  const [internalStep, setInternalStep] = useState(0);
+  const step = controlledStep ?? internalStep;
+  const setStep = (value: number) => {
+    if (onStepChange) onStepChange(value);
+    else setInternalStep(value);
+  };
   const [position, setPosition] = useState<Position | null>(null);
   const card = useRef<HTMLElement>(null);
-  const options = useRef({ step, onClose });
-  options.current = { step, onClose };
+  const options = useRef({ step, steps, onClose });
+  options.current = { step, steps, onClose };
   const current = steps[step];
+  const canContinue = current.complete !== false;
   const ready = position !== null;
 
   useEffect(() => {
     if (ready) card.current?.focus({ preventScroll: true });
-  }, [step, ready]);
+  }, [step, ready, current.target]);
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
@@ -58,7 +82,7 @@ export function CheckTutorial({ root, onClose }: {
         options.current.onClose();
       }
       if (event.key !== "Tab") return;
-      const target = root.current?.querySelector<HTMLElement>(`[data-tutorial="${steps[options.current.step].target}"]`);
+      const target = root.current?.querySelector<HTMLElement>(`[data-tutorial="${options.current.steps[options.current.step].target}"]`);
       const controls = [
         ...Array.from(card.current?.querySelectorAll<HTMLElement>(focusable) || []),
         ...(target?.matches(focusable) ? [target] : []),
@@ -83,24 +107,32 @@ export function CheckTutorial({ root, onClose }: {
 
   useLayoutEffect(() => {
     // Child layout effects run before the parent's ref is attached on first mount.
-    const owner = root.current || card.current?.closest(".new-case-modal");
+    const owner = root.current || card.current?.closest(".new-case-modal, .shell");
     const target = owner?.querySelector<HTMLElement>(`[data-tutorial="${current.target}"]`);
     if (!target) return;
     target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
     let frame = 0;
     const measure = () => {
-      const rect = target.getBoundingClientRect();
       const scroller = owner?.querySelector(".new-case-fields");
       const clip = scroller?.contains(target) ? scroller.getBoundingClientRect() : null;
       const width = window.innerWidth, height = window.innerHeight;
-      const focus = {
-        left: Math.max(4, rect.left - 7), right: Math.min(width - 4, rect.right + 7),
-        top: Math.max(4, rect.top - 7, clip?.top ?? 0),
-        bottom: Math.min(height - 4, rect.bottom + 7, clip?.bottom ?? height),
+      const bounds = () => {
+        const rect = target.getBoundingClientRect();
+        const box = {
+          left: Math.max(4, rect.left - 7), right: Math.min(width - 4, rect.right + 7),
+          top: Math.max(4, rect.top - 7, clip?.top ?? 0),
+          bottom: Math.min(height - 4, rect.bottom + 7, clip?.bottom ?? height),
+        };
+        box.bottom = Math.max(box.top, box.bottom);
+        return box;
       };
-      focus.bottom = Math.max(focus.top, focus.bottom);
+      let focus = bounds();
       const cardWidth = card.current?.offsetWidth || Math.min(360, width - 24);
       const cardHeight = card.current?.offsetHeight || 250;
+      if (focus.bottom + 16 + cardHeight > height - 12 && focus.top - cardHeight - 16 < 12) {
+        target.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
+        focus = bounds();
+      }
       const below = focus.bottom + 16;
       const above = focus.top - cardHeight - 16;
       const top = below + cardHeight <= height - 12 ? below
@@ -139,10 +171,10 @@ export function CheckTutorial({ root, onClose }: {
         }} />
       </>}
       <section className="tutorial-card" ref={card} tabIndex={-1} role="region"
-        aria-label="Как сделать проверку" aria-describedby="tutorial-description"
+        aria-label={label} aria-describedby="tutorial-description"
         style={{ left: position?.left ?? 12, top: position?.top ?? 12, visibility: position ? "visible" : "hidden" }}>
         <div className="tutorial-caption">
-          <span>КАК СДЕЛАТЬ ПРОВЕРКУ · {step + 1} ИЗ {steps.length}</span>
+          <span>{label.toUpperCase()} · {step + 1} ИЗ {steps.length}</span>
           <button type="button" onClick={onClose} aria-label="Закрыть обучение"><X size={18} /></button>
         </div>
         <div className="tutorial-progress" aria-hidden="true">
@@ -151,12 +183,20 @@ export function CheckTutorial({ root, onClose }: {
         <div aria-live="polite" aria-atomic="true">
           <h3>{current.title}</h3>
           <p id="tutorial-description">{current.text}</p>
+          {current.content}
+          {current.complete !== undefined && <p className={"tutorial-step-status " + (canContinue ? "complete" : "")} role="status">
+            {canContinue ? current.successText || "Задание выполнено. Можно продолжать." : current.waitingText || "Выполните задание, чтобы продолжить."}
+          </p>}
         </div>
         <div className="tutorial-actions">
           {step > 0
             ? <button type="button" className="text-button" onClick={() => setStep(step - 1)}><ArrowLeft size={16} />Назад</button>
-            : <button type="button" className="text-button" onClick={onClose}>Пропустить</button>}
-          <button type="button" className="button primary" onClick={() => step === steps.length - 1 ? onClose() : setStep(step + 1)}>
+            : <button type="button" className="text-button" onClick={onClose}>{exitLabel}</button>}
+          <button type="button" className="button primary" disabled={!canContinue} onClick={() => {
+            if (!canContinue) return;
+            if (step === steps.length - 1) (onFinish || onClose)();
+            else setStep(step + 1);
+          }}>
             {step === steps.length - 1 ? <>Завершить обучение<Check size={16} /></> : <>Далее<ArrowRight size={16} /></>}
           </button>
         </div>
