@@ -1,26 +1,54 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { X } from "lucide-react";
-import type { Help } from "./PracticeLesson";
+import { ArrowLeft, ArrowRight, Check, X } from "lucide-react";
 import "./tutorial.css";
+
+const steps = [
+  {
+    target: "report",
+    title: "Загрузите отчёт КФЗ",
+    text: "Нажмите на выделенную область и выберите один PDF, PNG или JPEG. После загрузки мы попробуем определить договор, этап и период. Для знакомства с формой можно просто нажать «Далее».",
+  },
+  {
+    target: "scope",
+    title: "Проверьте параметры сверки",
+    text: "Уточните номер договора, нужный этап и даты расходов внутри одного года. Найденные значения можно исправить. Пустые поля заполните вручную: период всей работы может отличаться от периода выбранной строки КФЗ.",
+  },
+  {
+    target: "primary",
+    title: "Добавьте первичные документы",
+    text: "Выберите акты, ведомости и другие документы, подтверждающие расходы за выбранный период. Можно добавить сразу несколько файлов PDF, DOCX, XLSX, PNG или JPEG, до 25 МБ каждый.",
+  },
+  {
+    target: "complete",
+    title: "Укажите полноту комплекта",
+    text: "Поставьте галочку, если загрузили все первичные документы за период. Если комплект неполный, оставьте её пустой — вывод сверки будет ограничен подтверждёнными расходами.",
+  },
+  {
+    target: "submit",
+    title: "Запустите проверку",
+    text: "Когда документы и параметры готовы, нажмите «Начать сверку». После обработки откроются результаты: суммы, расхождения и ссылки на источники. Кнопка «Завершить обучение» только закроет подсказки.",
+  },
+];
 
 type Bounds = { left: number; top: number; right: number; bottom: number };
 type Position = { focus: Bounds; left: number; top: number };
 const focusable = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]';
 
-export function CheckTutorial({ root, onClose, target: targetName, title, text }: Help & {
+export function CheckTutorial({ root, onClose }: {
   root: RefObject<HTMLElement | null>;
   onClose: () => void;
 }) {
+  const [step, setStep] = useState(0);
   const [position, setPosition] = useState<Position | null>(null);
   const card = useRef<HTMLElement>(null);
-  const options = useRef({ targetName, onClose });
-  options.current = { targetName, onClose };
-  const previousFocus = useRef(document.activeElement as HTMLElement | null);
+  const options = useRef({ step, onClose });
+  options.current = { step, onClose };
+  const current = steps[step];
   const ready = position !== null;
 
   useEffect(() => {
     if (ready) card.current?.focus({ preventScroll: true });
-  }, [targetName, ready]);
+  }, [step, ready]);
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
@@ -30,7 +58,7 @@ export function CheckTutorial({ root, onClose, target: targetName, title, text }
         options.current.onClose();
       }
       if (event.key !== "Tab") return;
-      const target = root.current?.querySelector<HTMLElement>(`[data-tutorial="${options.current.targetName}"]`);
+      const target = root.current?.querySelector<HTMLElement>(`[data-tutorial="${steps[options.current.step].target}"]`);
       const controls = [
         ...Array.from(card.current?.querySelectorAll<HTMLElement>(focusable) || []),
         ...(target?.matches(focusable) ? [target] : []),
@@ -47,17 +75,16 @@ export function CheckTutorial({ root, onClose, target: targetName, title, text }
     document.addEventListener("keydown", keyboard, true);
     return () => {
       document.removeEventListener("keydown", keyboard, true);
-      const target = root.current?.querySelector<HTMLElement>(`[data-tutorial="${options.current.targetName}"]`);
-      const control = target?.matches(focusable) ? target : target?.querySelector<HTMLElement>(focusable);
-      if (control?.isConnected) control.focus({ preventScroll: true });
-      else if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true });
+      if (root.current?.isConnected) {
+        root.current.querySelector<HTMLElement>("[data-tutorial-start]")?.focus({ preventScroll: true });
+      }
     };
   }, [root]);
 
   useLayoutEffect(() => {
     // Child layout effects run before the parent's ref is attached on first mount.
-    const owner = root.current || card.current?.closest(".new-case-modal, .shell");
-    const target = owner?.querySelector<HTMLElement>(`[data-tutorial="${targetName}"]`);
+    const owner = root.current || card.current?.closest(".new-case-modal");
+    const target = owner?.querySelector<HTMLElement>(`[data-tutorial="${current.target}"]`);
     if (!target) return;
     target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
     let frame = 0;
@@ -97,7 +124,7 @@ export function CheckTutorial({ root, onClose, target: targetName, title, text }
       window.removeEventListener("resize", schedule);
       document.removeEventListener("scroll", schedule, true);
     };
-  }, [root, targetName, title, text]);
+  }, [root, current]);
 
   const focus = position?.focus;
   return (
@@ -112,18 +139,26 @@ export function CheckTutorial({ root, onClose, target: targetName, title, text }
         }} />
       </>}
       <section className="tutorial-card" ref={card} tabIndex={-1} role="region"
-        aria-label="Подсказка с подсветкой" aria-describedby="tutorial-description"
+        aria-label="Как сделать проверку" aria-describedby="tutorial-description"
         style={{ left: position?.left ?? 12, top: position?.top ?? 12, visibility: position ? "visible" : "hidden" }}>
         <div className="tutorial-caption">
-          <span>ПОДСКАЗКА</span>
-          <button type="button" onClick={onClose} aria-label="Закрыть подсказку"><X size={18} /></button>
+          <span>КАК СДЕЛАТЬ ПРОВЕРКУ · {step + 1} ИЗ {steps.length}</span>
+          <button type="button" onClick={onClose} aria-label="Закрыть обучение"><X size={18} /></button>
+        </div>
+        <div className="tutorial-progress" aria-hidden="true">
+          {steps.map((item, index) => <span key={item.target} className={index <= step ? "done" : ""} />)}
         </div>
         <div aria-live="polite" aria-atomic="true">
-          <h3>{title}</h3>
-          <p id="tutorial-description">{text}</p>
+          <h3>{current.title}</h3>
+          <p id="tutorial-description">{current.text}</p>
         </div>
         <div className="tutorial-actions">
-          <button type="button" className="button primary" onClick={onClose}>Понятно</button>
+          {step > 0
+            ? <button type="button" className="text-button" onClick={() => setStep(step - 1)}><ArrowLeft size={16} />Назад</button>
+            : <button type="button" className="text-button" onClick={onClose}>Пропустить</button>}
+          <button type="button" className="button primary" onClick={() => step === steps.length - 1 ? onClose() : setStep(step + 1)}>
+            {step === steps.length - 1 ? <>Завершить обучение<Check size={16} /></> : <>Далее<ArrowRight size={16} /></>}
+          </button>
         </div>
       </section>
     </div>
