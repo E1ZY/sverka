@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowDownToLine,
@@ -25,7 +25,9 @@ import {
   X,
 } from "lucide-react";
 import "./style.css";
+import "./ux.css";
 import { FixtureBatchResults, type FixtureBatch } from "./FixtureBatchResults";
+import { useDialog } from "./useDialog";
 
 type Evidence = {
   text: string;
@@ -113,6 +115,7 @@ type Case = {
   id: string;
   title: string;
   status: string;
+  created_at?: string;
   context: {
     contract: string;
     stage: number;
@@ -195,10 +198,13 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch("/api" + path, init);
   if (!r.ok) {
     let detail = await r.json().catch(() => ({ detail: "Ошибка соединения" }));
-    throw new Error(
-      typeof detail.detail === "string"
-        ? detail.detail
-        : JSON.stringify(detail.detail),
+    throw Object.assign(
+      new Error(
+        typeof detail.detail === "string"
+          ? detail.detail
+          : JSON.stringify(detail.detail),
+      ),
+      { status: r.status },
     );
   }
   return r.json();
@@ -232,6 +238,7 @@ function App() {
     [tab, setTab] = useState("checks"),
     [filter, setFilter] = useState("all"),
     [search, setSearch] = useState(""),
+    [caseQuery, setCaseQuery] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [newOpen, setNewOpen] = useState(false),
@@ -240,15 +247,22 @@ function App() {
     [source, setSource] = useState<{ doc: Doc; evidence?: Evidence } | null>(
       null,
     );
+  const selection = useRef(selected);
+  selection.current = selected;
+  const detailDialog = useDialog(() => setDetail(null), false, !!detail);
   const refresh = async () => {
     setCases(await api<Case[]>("/cases"));
-    if (selected) {
+    if (selected && selection.current === selected) {
       const c = await api<Case>("/cases/" + selected);
-      setCurrent(c);
+      if (selection.current === selected) setCurrent(c);
     }
   };
   useEffect(() => {
-    refresh().catch((e) => setError(e.message));
+    refresh().catch((e) => {
+      if (selection.current !== selected) return;
+      if (e.status === 404) overview();
+      else setError(e.message);
+    });
   }, [selected]);
   const running = current?.status === "running" || current?.status === "queued";
   useEffect(() => {
@@ -260,12 +274,28 @@ function App() {
     return () => clearInterval(id);
   }, [running, selected]);
   const choose = (id: string) => {
+    if (!cases.some((item) => item.id === id)) setCaseQuery("");
+    if (selection.current !== id) setCurrent(null);
+    else refresh().catch((e) => setError(e.message));
+    selection.current = id;
     setSelected(id);
     localStorage.setItem("active-case", id);
     setDetail(null);
     setSource(null);
     setTab("checks");
     setFilter("all");
+    setSearch("");
+    setError("");
+  };
+  const overview = () => {
+    selection.current = null;
+    setSelected(null);
+    setCurrent(null);
+    localStorage.removeItem("active-case");
+    setTab("checks");
+    setDetail(null);
+    setSource(null);
+    setError("");
   };
   const action = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -278,11 +308,6 @@ function App() {
       setBusy(false);
     }
   };
-  const demo = () =>
-    action(async () => {
-      const r = await api<{ case_id: string }>("/demo", { method: "POST" });
-      choose(r.case_id);
-    });
   const start = () =>
     action(async () => {
       await api("/cases/" + selected + "/runs", { method: "POST" });
@@ -299,18 +324,59 @@ function App() {
     result?.metrics.filter((m) => m.code !== "total") || [];
   const mismatch = primaryMetrics.filter((m) => m.status === "MISMATCH").length;
   const matched = primaryMetrics.filter((m) => m.status === "MATCH").length;
-  const unverified =
-    (result?.unverified.length || 0) +
-    primaryMetrics.filter((m) => m.status === "INSUFFICIENT_DATA").length;
+  const unverified = primaryMetrics.filter(
+    (m) => !["MATCH", "MISMATCH"].includes(m.status),
+  ).length;
   const total = result?.metrics.find((m) => m.code === "total");
+  const hasMismatch = mismatch > 0 || total?.status === "MISMATCH";
+  const showMetrics = (value: string) => {
+    setTab("checks");
+    setFilter(value);
+    requestAnimationFrame(() =>
+      document.getElementById("metrics-panel")?.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+      }),
+    );
+  };
+  const caseLabels: Record<string, string> = {
+    completed: "Завершена",
+    running: "Выполняется",
+    queued: "В очереди",
+    failed: "Ошибка",
+    draft: "Черновик",
+  };
+  const filteredCases = cases.filter((item) =>
+    `${item.title} ${item.context.contract}`
+      .toLowerCase()
+      .includes(caseQuery.toLowerCase()),
+  );
+  const filteredDocs = docs.filter((d) =>
+    d.name.toLowerCase().includes(search.toLowerCase()),
+  );
   const visibleMetrics =
-    result?.metrics.filter((m) => filter === "all" || m.status === filter) ||
-    [];
+    result?.metrics.filter(
+      (m) =>
+        filter === "all" ||
+        (filter === "unverified"
+          ? !["MATCH", "MISMATCH"].includes(m.status)
+          : m.status === filter),
+    ) || [];
 
   return (
     <div className="shell">
       <aside className="sidebar">
-        <a className="brand" href="#" onClick={(e) => e.preventDefault()}>
+        <a
+          className="brand"
+          href="#"
+          aria-label="Все проверки"
+          onClick={(e) => {
+            e.preventDefault();
+            overview();
+          }}
+        >
           <span className="brand-icon">
             <Layers3 size={25} />
           </span>
@@ -318,20 +384,25 @@ function App() {
         </a>
         <div className="workspace-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
         <button
-          className="nav active"
-          onClick={() => {
-            setTab("checks");
-            setDetail(null);
-          }}
+          className={"nav " + (tab === "checks" ? "active" : "")}
+          onClick={overview}
         >
           <FileCheck2 size={18} />
           Проверки<span className="nav-count">{cases.length}</span>
         </button>
-        <button className="nav" onClick={() => setTab("documents")}>
+        <button
+          className={"nav " + (tab === "documents" ? "active" : "")}
+          disabled={!current}
+          onClick={() => setTab("documents")}
+        >
           <FolderOpen size={18} />
           Документы
         </button>
-        <button className="nav" onClick={() => setTab("history")}>
+        <button
+          className={"nav " + (tab === "history" ? "active" : "")}
+          disabled={!current}
+          onClick={() => setTab("history")}
+        >
           <History size={18} />
           История запусков
         </button>
@@ -345,23 +416,44 @@ function App() {
             <Plus size={16} />
           </button>
         </div>
+        <label className="case-search">
+          <Search size={15} />
+          <input
+            aria-label="Найти проверку"
+            placeholder="Название или договор"
+            value={caseQuery}
+            onChange={(e) => setCaseQuery(e.target.value)}
+          />
+        </label>
         <div className="case-list">
-          {cases.map((c) => (
+          {filteredCases.map((c) => (
             <button
               key={c.id}
               className={"case-link " + (c.id === selected ? "selected" : "")}
               onClick={() => choose(c.id)}
+              title={c.title}
             >
               <span
                 className={
                   "case-dot " + (c.status === "completed" ? "done" : "")
                 }
               />
-              <span>{c.title}</span>
+              <span className="case-link-info">
+                {c.title}
+                <small>
+                  {caseLabels[c.status] || c.status}
+                  {c.created_at
+                    ? " · " + new Date(c.created_at).toLocaleDateString("ru-RU")
+                    : ""}
+                </small>
+              </span>
             </button>
           ))}
           {!cases.length && (
             <p className="sidebar-empty">Здесь появятся ваши проверки</p>
+          )}
+          {!!cases.length && !filteredCases.length && (
+            <p className="sidebar-empty">Проверки не найдены</p>
           )}
         </div>
         <div className="sidebar-bottom">
@@ -375,9 +467,17 @@ function App() {
       <main>
         <header className="topbar">
           <div className="breadcrumbs">
-            Рабочее пространство
+            <button onClick={overview}>Все проверки</button>
             <ChevronRight size={14} />
-            <strong>Проверки</strong>
+            <strong>
+              {current
+                ? tab === "documents"
+                  ? "Документы проверки"
+                  : tab === "history"
+                    ? "История проверки"
+                    : "Результаты"
+                : "Рабочее пространство"}
+            </strong>
           </div>
           <div className="local">
             <span />
@@ -388,7 +488,13 @@ function App() {
           <div className="page-heading">
             <div>
               <div className="eyebrow">ПРОВЕРКА ДОСТОВЕРНОСТИ ОТЧЁТНОСТИ</div>
-              <h1>{current ? current.title : "Каждая цифра — с основанием"}</h1>
+              <h1>
+                {current
+                  ? current.title
+                  : selected
+                    ? "Открываем проверку…"
+                    : "Сверка отчётности"}
+              </h1>
               <p>
                 {current
                   ? "Сопоставление показателей КФЗ с первичными документами"
@@ -423,52 +529,104 @@ function App() {
               </button>
             </div>
           )}
-          {!current ? (
-            <div className="welcome">
-              <div className="welcome-icon">
-                <FileCheck2 size={40} />
-              </div>
-              <span className="eyebrow">ОТ ДОКУМЕНТА ДО ЗАКЛЮЧЕНИЯ</span>
-              <h2>Прозрачная проверка затрат</h2>
-              <p>
-                Суммы, договоры и периоды — в одном рабочем пространстве.
-                <br />
-                Каждое расхождение можно проследить до первичного документа.
-              </p>
-              <div className="welcome-actions">
-                <button
-                  className="button primary"
-                  disabled={busy}
-                  onClick={demo}
-                >
-                  {busy ? (
-                    <Loader2 className="spin" size={17} />
-                  ) : (
-                    <ArrowRight size={17} />
-                  )}
-                  Проверить пример
-                </button>
-                <button className="button" onClick={() => setNewOpen(true)}>
-                  <Upload size={17} />
-                  Загрузить документы
-                </button>
-              </div>
-              <div className="format-list">
-                <span>PDF</span>
-                <span>DOCX</span>
-                <span>XLSX</span>
-                <span>PNG</span>
-                <small>Включая сканы</small>
-              </div>
-              <button
-                className="welcome-fixtures text-button"
-                onClick={() => setFixturesOpen(true)}
-              >
-                <Layers3 size={15} />
-                Выбрать готовый тестовый кейс
-                <ArrowRight size={14} />
-              </button>
+          {!current && selected ? (
+            <div className="panel empty-small" role="status">
+              <Loader2 className="spin" />
+              <p>Загружаем документы и результаты…</p>
             </div>
+          ) : !current ? (
+            <>
+              {!cases.length && (
+                <div className="welcome">
+                  <div className="welcome-icon">
+                    <FileCheck2 size={40} />
+                  </div>
+                  <span className="eyebrow">ОТ ДОКУМЕНТА ДО ЗАКЛЮЧЕНИЯ</span>
+                  <h2>Проверьте отчёт по первичным документам</h2>
+                  <p>
+                    Один отчёт КФЗ и подтверждающие документы — в одну проверку.
+                    <br />
+                    Каждое расхождение можно проследить до первичного документа.
+                  </p>
+                  <div className="welcome-actions">
+                    <button
+                      className="button primary"
+                      disabled={busy}
+                      onClick={() => setNewOpen(true)}
+                    >
+                      {busy ? (
+                        <Loader2 className="spin" size={17} />
+                      ) : (
+                        <ArrowRight size={17} />
+                      )}
+                      Загрузить свои документы
+                    </button>
+                    <button
+                      className="button"
+                      onClick={() => setFixturesOpen(true)}
+                    >
+                      <Layers3 size={17} />
+                      Попробовать тестовый кейс
+                    </button>
+                  </div>
+                  <div className="format-list">
+                    <span>PDF</span>
+                    <span>DOCX</span>
+                    <span>XLSX</span>
+                    <span>PNG</span>
+                    <small>Включая сканы</small>
+                  </div>
+                </div>
+              )}
+              {!!cases.length && (
+                <section className="panel overview-cases">
+                  <div className="panel-heading">
+                    <h2>
+                      Ваши проверки{" "}
+                      <span className="subtle">{cases.length}</span>
+                    </h2>
+                    <label className="search">
+                      <Search size={16} />
+                      <input
+                        aria-label="Поиск по проверкам"
+                        placeholder="Название или договор"
+                        value={caseQuery}
+                        onChange={(e) => setCaseQuery(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  {filteredCases.map((c) => (
+                    <button
+                      key={c.id}
+                      className="overview-case"
+                      onClick={() => choose(c.id)}
+                    >
+                      <FileCheck2 size={21} />
+                      <div>
+                        <strong>{c.title}</strong>
+                        <small>
+                          Договор {c.context.contract} · Этап {c.context.stage}
+                          {c.created_at
+                            ? " · " +
+                              new Date(c.created_at).toLocaleString("ru-RU")
+                            : ""}
+                        </small>
+                      </div>
+                      <span className={"case-status " + c.status}>
+                        {caseLabels[c.status] || c.status}
+                      </span>
+                      <ChevronRight size={17} />
+                    </button>
+                  ))}
+                  {!filteredCases.length && (
+                    <div className="empty-small">
+                      Ничего не найдено. Попробуйте другое название или номер
+                      договора.
+                    </div>
+                  )}
+                </section>
+              )}
+            </>
           ) : (
             <>
               <div className="context-bar">
@@ -503,7 +661,75 @@ function App() {
                         : "Комплект документов"}
                 </div>
               </div>
-              {current.fixture_comparison && (
+              {result && tab === "checks" && (
+                <section
+                  className={
+                    "result-summary " +
+                    (hasMismatch
+                      ? "attention"
+                      : unverified || total?.status !== "MATCH"
+                        ? "incomplete"
+                        : "confirmed")
+                  }
+                  aria-label="Итог сверки"
+                >
+                  <span className="result-summary-icon">
+                    {hasMismatch || unverified ? (
+                      <CircleAlert size={25} />
+                    ) : (
+                      <ShieldCheck size={25} />
+                    )}
+                  </span>
+                  <div>
+                    <span className="eyebrow">ИТОГ СВЕРКИ ДОКУМЕНТОВ</span>
+                    <h2>
+                      {hasMismatch
+                        ? "Есть расхождения в отчёте"
+                        : unverified || total?.status !== "MATCH"
+                          ? "Для вывода нужны дополнительные данные"
+                          : "Проверяемые суммы подтверждены"}
+                    </h2>
+                    <p>
+                      {hasMismatch
+                        ? total?.delta == null
+                          ? "В отдельных статьях есть расхождения. Для общего итога недостаточно данных."
+                          : Number(total.delta) === 0
+                            ? "Суммы отдельных статей отличаются, хотя общий итог совпадает."
+                            : "Разница между отчётом и подтверждающими документами. Откройте статью, чтобы увидеть расчёт."
+                        : "Вывод относится к предоставленному комплекту. Непроверенные показатели перечислены в границах проверки."}
+                    </p>
+                  </div>
+                  {hasMismatch && total?.delta != null && (
+                    <div className="result-summary-amount">
+                      <small>Разница по итогу</small>
+                      <strong>
+                        {Number(total.delta) > 0 ? "+" : ""}
+                        {rub(total.delta)} ₽
+                      </strong>
+                    </div>
+                  )}
+                  <button
+                    className="button"
+                    onClick={() =>
+                      showMetrics(
+                        hasMismatch
+                          ? "MISMATCH"
+                          : unverified
+                            ? "unverified"
+                            : "all",
+                      )
+                    }
+                  >
+                    {hasMismatch
+                      ? "Показать расхождения"
+                      : unverified
+                        ? "Что проверить"
+                        : "К показателям"}
+                    <ArrowRight size={16} />
+                  </button>
+                </section>
+              )}
+              {current.fixture_comparison && tab === "checks" && (
                 <FixtureComparisonPanel
                   comparison={current.fixture_comparison}
                 />
@@ -536,7 +762,7 @@ function App() {
               )}
               {result && (
                 <div className="stats">
-                  <div className="stat">
+                  <button className="stat" onClick={() => showMetrics("MATCH")}>
                     <span className="stat-icon green">
                       <CheckCheck size={21} />
                     </span>
@@ -544,18 +770,14 @@ function App() {
                       <span>Подтверждено</span>
                       <strong>
                         {matched}
-                        <small>статьи затрат</small>
+                        <small>из {primaryMetrics.length} статей</small>
                       </strong>
                     </div>
-                    <div className="mini-bars">
-                      <i />
-                      <i />
-                      <i />
-                      <i />
-                      <i />
-                    </div>
-                  </div>
-                  <div className="stat">
+                  </button>
+                  <button
+                    className="stat"
+                    onClick={() => showMetrics("MISMATCH")}
+                  >
                     <span className="stat-icon orange">
                       <CircleAlert size={21} />
                     </span>
@@ -564,14 +786,17 @@ function App() {
                       <strong>
                         {mismatch}
                         <small>
-                          {total?.delta && Number(total.delta) !== 0
-                            ? rub(total.delta) + " ₽"
+                          {mismatch === 0 && total?.status === "MISMATCH"
+                            ? "ошибка общего итога"
                             : "по статьям затрат"}
                         </small>
                       </strong>
                     </div>
-                  </div>
-                  <div className="stat">
+                  </button>
+                  <button
+                    className="stat"
+                    onClick={() => showMetrics("unverified")}
+                  >
                     <span className="stat-icon gray">
                       <Search size={21} />
                     </span>
@@ -579,11 +804,11 @@ function App() {
                       <span>Недостаточно данных</span>
                       <strong>
                         {unverified}
-                        <small>показателя</small>
+                        <small>статей затрат</small>
                       </strong>
                     </div>
-                  </div>
-                  <div className="stat">
+                  </button>
+                  <button className="stat" onClick={() => setTab("documents")}>
                     <span className="stat-icon blue">
                       <Files size={21} />
                     </span>
@@ -597,7 +822,7 @@ function App() {
                         </small>
                       </strong>
                     </div>
-                  </div>
+                  </button>
                 </div>
               )}
               <div className="tabs">
@@ -643,32 +868,7 @@ function App() {
               {tab === "checks" &&
                 (result ? (
                   <>
-                    <div
-                      className={"conclusion " + (mismatch ? "attention" : "")}
-                    >
-                      <span className="conclusion-icon">
-                        {mismatch ? (
-                          <CircleAlert size={23} />
-                        ) : (
-                          <ShieldCheck size={23} />
-                        )}
-                      </span>
-                      <div>
-                        <strong>
-                          {mismatch
-                            ? "Обнаружено расхождение в отчётности"
-                            : total?.status === "MATCH"
-                              ? "Проверяемые суммы подтверждены"
-                              : "Проверка требует дополнительных данных"}
-                        </strong>
-                        <p>
-                          {mismatch
-                            ? `Итоговая разница составляет ${rub(total?.delta)} ₽. Откройте статью, чтобы увидеть расчёт и подтверждающие документы.`
-                            : "Оценка относится к указанным показателям и предоставленному комплекту документов."}
-                        </p>
-                      </div>
-                    </div>
-                    <section className="panel">
+                    <section className="panel" id="metrics-panel">
                       <div className="panel-heading">
                         <h2>Показатели отчёта</h2>
                         <div
@@ -679,10 +879,12 @@ function App() {
                             ["all", "Все"],
                             ["MISMATCH", "Расхождения"],
                             ["MATCH", "Подтверждено"],
+                            ["unverified", "Нужны данные"],
                           ].map(([v, l]) => (
                             <button
                               key={v}
                               className={filter === v ? "active" : ""}
+                              aria-pressed={filter === v}
                               onClick={() => setFilter(v)}
                             >
                               {l}
@@ -714,7 +916,10 @@ function App() {
                                 onClick={() => setDetail(m)}
                                 tabIndex={0}
                                 onKeyDown={(e) => {
-                                  if (e.key === "Enter") setDetail(m);
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    setDetail(m);
+                                  }
                                 }}
                               >
                                 <td>
@@ -764,7 +969,7 @@ function App() {
                         <div className="panel-heading">
                           <h2>Контроль комплекта</h2>
                           <span className="subtle">
-                            {result.findings.length} замечания
+                            Всего: {result.findings.length}
                           </span>
                         </div>
                         {result.findings.length ? (
@@ -794,7 +999,7 @@ function App() {
                         <div className="panel-heading">
                           <h2>Границы проверки</h2>
                           <span className="subtle">
-                            {result.unverified.length} показателя
+                            {result.unverified.length} вне расчёта
                           </span>
                         </div>
                         {result.unverified.map((m) => (
@@ -841,49 +1046,55 @@ function App() {
                       />
                     </label>
                   </div>
-                  {docs
-                    .filter((d) =>
-                      d.name.toLowerCase().includes(search.toLowerCase()),
-                    )
-                    .map((d) => (
-                      <button
-                        key={d.id}
-                        className="document-row"
-                        onClick={() =>
-                          setSource({
-                            doc: d,
-                            evidence: d.extraction?.amount_evidence,
-                          })
-                        }
-                      >
-                        <span className="file-icon">
-                          <FileText size={20} />
-                          <small>{d.name.split(".").pop()}</small>
-                        </span>
-                        <div>
-                          <strong>{d.name}</strong>
-                          <p>
-                            {d.role === "report"
-                              ? "Итоговый отчёт"
-                              : d.extraction?.contract || "Первичный документ"}
-                            {d.extraction?.article
-                              ? " · " + articles[d.extraction.article]
-                              : ""}
-                          </p>
-                        </div>
-                        <span className="document-amount">
-                          {d.extraction?.amount
-                            ? rub(d.extraction.amount) + " ₽"
-                            : ""}
-                        </span>
-                        {d.role === "report" ? (
-                          <span className="badge report">КФЗ</span>
-                        ) : (
-                          <Badge status={d.disposition || "NEEDS_REVIEW"} />
-                        )}
-                        <ChevronRight size={16} />
+                  {!filteredDocs.length && (
+                    <div className="empty-small">
+                      <Search size={24} />
+                      <h3>Документы не найдены</h3>
+                      <p>Попробуйте часть имени файла.</p>
+                      <button className="button" onClick={() => setSearch("")}>
+                        Сбросить поиск
                       </button>
-                    ))}
+                    </div>
+                  )}
+                  {filteredDocs.map((d) => (
+                    <button
+                      key={d.id}
+                      className="document-row"
+                      onClick={() =>
+                        setSource({
+                          doc: d,
+                          evidence: d.extraction?.amount_evidence,
+                        })
+                      }
+                    >
+                      <span className="file-icon">
+                        <FileText size={20} />
+                        <small>{d.name.split(".").pop()}</small>
+                      </span>
+                      <div>
+                        <strong>{d.name}</strong>
+                        <p>
+                          {d.role === "report"
+                            ? "Итоговый отчёт"
+                            : d.extraction?.contract || "Первичный документ"}
+                          {d.extraction?.article
+                            ? " · " + articles[d.extraction.article]
+                            : ""}
+                        </p>
+                      </div>
+                      <span className="document-amount">
+                        {d.extraction?.amount
+                          ? rub(d.extraction.amount) + " ₽"
+                          : ""}
+                      </span>
+                      {d.role === "report" ? (
+                        <span className="badge report">КФЗ</span>
+                      ) : (
+                        <Badge status={d.disposition || "NEEDS_REVIEW"} />
+                      )}
+                      <ChevronRight size={16} />
+                    </button>
+                  ))}
                 </section>
               )}
               {tab === "history" && (
@@ -967,6 +1178,7 @@ function App() {
         <div className="overlay" onClick={() => setDetail(null)}>
           <section
             className="detail-panel"
+            ref={detailDialog}
             role="dialog"
             aria-modal="true"
             aria-label="Расчёт показателя"
@@ -1122,17 +1334,17 @@ function FixtureComparisonPanel({
         )}
         <div>
           <span className="eyebrow">
-            ТЕСТОВЫЙ КЕЙС · {comparison.fixture_id}
+            ТЕСТОВЫЙ СЦЕНАРИЙ · {comparison.title || comparison.fixture_id}
           </span>
           <h2>
             {comparison.matches
-              ? "Результат совпал с эталоном"
-              : "Результат отличается от эталона"}
+              ? "Тестовый сценарий пройден"
+              : "Тестовый сценарий выявил отличия"}
           </h2>
           <p>
             {comparison.matches
-              ? "Показатели, статусы и замечания соответствуют ожидаемому результату кейса."
-              : "Сверка завершена. Ниже можно проверить отличия полученного результата от ожидаемого."}
+              ? "Поведение соответствует эталону теста. Финансовый итог показан выше."
+              : "Полученный результат отличается от эталона теста. Посмотрите подробности ниже."}
           </p>
         </div>
       </div>
@@ -1190,11 +1402,13 @@ function FixtureCatalog({
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
     [chosen, setChosen] = useState(""),
+    [showContext, setShowContext] = useState(false),
     [busy, setBusy] = useState(false),
     [rejected, setRejected] = useState<FixtureLaunch | null>(null),
     [batch, setBatch] = useState<FixtureBatch | null>(null),
     [batchError, setBatchError] = useState(""),
     [view, setView] = useState("catalog");
+  const dialog = useDialog(onClose, busy);
   useEffect(() => {
     let cancelled = false;
     Promise.allSettled([
@@ -1241,13 +1455,6 @@ function FixtureCatalog({
       window.clearTimeout(timer);
     };
   }, [batch?.id, batch?.status]);
-  useEffect(() => {
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) onClose();
-    };
-    window.addEventListener("keydown", escape);
-    return () => window.removeEventListener("keydown", escape);
-  }, [busy, onClose]);
   const visible = items.filter(
     (item) =>
       (filter === "all" ||
@@ -1261,6 +1468,7 @@ function FixtureCatalog({
   const active = visible.find((item) => item.id === chosen) || visible[0];
   const select = (id: string) => {
     setChosen(id);
+    setShowContext(false);
     setRejected(null);
     setError("");
   };
@@ -1294,7 +1502,9 @@ function FixtureCatalog({
       setError((e as Error).message);
       // Another tab may already have started the same whole-catalog run.
       try {
-        const latest = await api<FixtureBatch | null>("/fixture-batches/latest");
+        const latest = await api<FixtureBatch | null>(
+          "/fixture-batches/latest",
+        );
         if (latest?.status === "running") {
           setBatch(latest);
           setView("batch");
@@ -1311,6 +1521,7 @@ function FixtureCatalog({
     <div className="overlay fixture-overlay">
       <section
         className="fixture-modal"
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-label="Тестовые кейсы"
@@ -1348,135 +1559,163 @@ function FixtureCatalog({
             Общий прогон{batch ? ` · ${batch.done}/${batch.total}` : ""}
           </button>
         </div>
-        {view === "catalog" && <div className="fixture-toolbar">
-          <label className="search">
-            <Search size={16} />
-            <input
-              autoFocus
-              placeholder="Найти кейс по названию или номеру"
-              value={query}
-              disabled={busy}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setRejected(null);
-              }}
-            />
-          </label>
-          <div className="filters">
-            {[
-              ["all", "Все"],
-              ["supported", "Поддерживаются"],
-              ["limitations", "Ограничения MVP"],
-            ].map(([id, label]) => (
-              <button
-                key={id}
+        {view === "catalog" && (
+          <div className="fixture-toolbar">
+            <label className="search">
+              <Search size={16} />
+              <input
+                autoFocus
+                placeholder="Найти кейс по названию или номеру"
+                value={query}
                 disabled={busy}
-                className={filter === id ? "active" : ""}
-                onClick={() => {
-                  setFilter(id);
+                onChange={(e) => {
+                  setQuery(e.target.value);
                   setRejected(null);
                 }}
-              >
-                {label}
-              </button>
-            ))}
+              />
+            </label>
+            <div className="filters">
+              {[
+                ["all", "Все"],
+                ["supported", "Поддерживаются"],
+                ["limitations", "Ограничения MVP"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  disabled={busy}
+                  className={filter === id ? "active" : ""}
+                  onClick={() => {
+                    setFilter(id);
+                    setRejected(null);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>}
+        )}
         {(error || batchError) && (
           <p role="alert" className="fixture-error">
             {error || batchError}
           </p>
         )}
-        {view === "batch" && batch ? <FixtureBatchResults batch={batch} onOpen={onDone} /> : <div className="fixture-layout">
-          <div className="fixture-list" aria-label="Список тестовых кейсов">
-            {loading ? (
-              <div className="empty-small">
-                <Loader2 size={22} className="spin" />
-                <p>Загружаем каталог…</p>
-              </div>
-            ) : visible.length ? (
-              visible.map((item) => (
-                <button
-                  className={
-                    "fixture-option " +
-                    (item.id === active?.id ? "selected" : "")
-                  }
-                  key={item.id}
-                  disabled={busy}
-                  aria-pressed={item.id === active?.id}
-                  onClick={() => select(item.id)}
-                >
-                  <span className="fixture-number">
-                    {item.origin === "task" ? "ТЗ" : item.id.slice(0, 2)}
-                  </span>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <span>{item.description}</span>
-                    {item.origin === "task" && (
-                      <small className="task-fixture">Из задания</small>
-                    )}
-                    {item.known_limitation && <small>Ограничение MVP</small>}
-                  </div>
-                  {item.id === active?.id && <Check size={17} />}
-                </button>
-              ))
-            ) : (
-              <div className="empty-small">
-                {items.length
-                  ? "Кейсы не найдены. Измените запрос или фильтр."
-                  : "Тестовые комплекты не установлены. Можно загрузить свои документы через «Новая проверка»."}
-              </div>
-            )}
-          </div>
-          <aside className="fixture-description">
-            {active && (
-              <>
-                <span className="eyebrow">
-                  {active.origin === "task"
-                    ? "ИЗ ЗАДАНИЯ"
-                    : `КЕЙС ${active.id.slice(0, 2)}`}
-                </span>
-                <h3>{active.title}</h3>
-                <p>{active.description}</p>
-                <dl>
-                  <dt>Договор</dt>
-                  <dd>{active.context.contract}</dd>
-                  <dt>Этап</dt>
-                  <dd>{active.context.stage}</dd>
-                  <dt>Период</dt>
-                  <dd>
-                    {dt(active.context.period_start)} —{" "}
-                    {dt(active.context.period_end)}
-                  </dd>
-                  <dt>Комплект</dt>
-                  <dd>
-                    {active.input_files} файлов ·{" "}
-                    {active.context.complete_package
-                      ? "заявлен полным"
-                      : "полнота не подтверждена"}
-                  </dd>
-                </dl>
-                {active.known_limitation ? (
-                  <p className="fixture-scope">
-                    <CircleAlert size={17} />
-                    <span>
-                      <strong>Известное ограничение</strong>
-                      {active.known_limitation}
+        {view === "batch" && batch ? (
+          <FixtureBatchResults batch={batch} onOpen={onDone} />
+        ) : (
+          <div className="fixture-layout">
+            <div className="fixture-list" aria-label="Список тестовых кейсов">
+              {loading ? (
+                <div className="empty-small">
+                  <Loader2 size={22} className="spin" />
+                  <p>Загружаем каталог…</p>
+                </div>
+              ) : visible.length ? (
+                visible.map((item) => (
+                  <button
+                    className={
+                      "fixture-option " +
+                      (item.id === active?.id ? "selected" : "")
+                    }
+                    key={item.id}
+                    disabled={busy}
+                    aria-pressed={item.id === active?.id}
+                    onClick={() => select(item.id)}
+                  >
+                    <span className="fixture-number">
+                      {item.origin === "task" ? "ТЗ" : item.id.slice(0, 2)}
                     </span>
-                  </p>
-                ) : (
-                  <p className="fixture-scope supported">
-                    <ShieldCheck size={17} />
-                    <span>Сценарий входит в регрессионную проверку MVP.</span>
-                  </p>
-                )}
-                <p className="fixture-oracle-note">
-                  После сверки появится отдельное сравнение с эталоном кейса.
-                </p>
-              </>
-            )}
-          </aside>
-        </div>}
+                    <div>
+                      <strong>{item.title}</strong>
+                      <span>{item.description}</span>
+                      {item.origin === "task" && (
+                        <small className="task-fixture">Из задания</small>
+                      )}
+                      {item.known_limitation && <small>Ограничение MVP</small>}
+                    </div>
+                    {item.id === active?.id && <Check size={17} />}
+                  </button>
+                ))
+              ) : (
+                <div className="empty-small">
+                  {items.length
+                    ? "Кейсы не найдены. Измените запрос или фильтр."
+                    : "Тестовые комплекты не установлены. Можно загрузить свои документы через «Новая проверка»."}
+                </div>
+              )}
+            </div>
+            <aside
+              className={
+                "fixture-description " +
+                (showContext ? "expanded" : "collapsed")
+              }
+            >
+              {active && (
+                <>
+                  <button
+                    className="fixture-context-toggle"
+                    aria-expanded={showContext}
+                    aria-controls="fixture-context"
+                    onClick={() => setShowContext(!showContext)}
+                  >
+                    <span>
+                      <small>ПАРАМЕТРЫ СЦЕНАРИЯ</small>
+                      {active.title}
+                    </span>
+                    <ChevronRight size={18} />
+                  </button>
+                  <div id="fixture-context">
+                    <span className="eyebrow">
+                      {active.origin === "task"
+                        ? "ИЗ ЗАДАНИЯ"
+                        : `КЕЙС ${active.id.slice(0, 2)}`}
+                    </span>
+                    <h3>{active.title}</h3>
+                    <p>{active.description}</p>
+                    <dl>
+                      <dt>Договор</dt>
+                      <dd>{active.context.contract}</dd>
+                      <dt>Этап</dt>
+                      <dd>{active.context.stage}</dd>
+                      <dt>Период</dt>
+                      <dd>
+                        {dt(active.context.period_start)} —{" "}
+                        {dt(active.context.period_end)}
+                      </dd>
+                      <dt>Комплект</dt>
+                      <dd>
+                        {active.input_files} файлов ·{" "}
+                        {active.context.complete_package
+                          ? "заявлен полным"
+                          : "полнота не подтверждена"}
+                      </dd>
+                    </dl>
+                    {active.known_limitation ? (
+                      <p className="fixture-scope">
+                        <CircleAlert size={17} />
+                        <span>
+                          <strong>Известное ограничение</strong>
+                          {active.known_limitation}
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="fixture-scope supported">
+                        <ShieldCheck size={17} />
+                        <span>
+                          Сценарий входит в регрессионную проверку MVP.
+                        </span>
+                      </p>
+                    )}
+                    <p className="fixture-oracle-note">
+                      После сверки появится отдельное сравнение с эталоном
+                      кейса.
+                    </p>
+                  </div>
+                </>
+              )}
+            </aside>
+          </div>
+        )}
         {view === "catalog" && rejected && (
           <div
             className={
@@ -1511,36 +1750,37 @@ function FixtureCatalog({
               : `${visible.length} из ${items.length} кейсов · локальная обработка`}
           </span>
           <div className="fixture-footer-actions">
-          <button
-            className={"button " + (view === "batch" ? "primary" : "")}
-            disabled={loading || busy || !items.length || batchRunning}
-            title="Проверить весь каталог, включая кейсы, скрытые поиском и фильтрами"
-            onClick={launchAll}
-          >
-            {busy ? (
-              <Loader2 size={17} className="spin" />
-            ) : (
-              <CheckCheck size={17} />
+            <button
+              className={"button " + (view === "batch" ? "primary" : "")}
+              disabled={loading || busy || !items.length || batchRunning}
+              title="Проверить весь каталог, включая кейсы, скрытые поиском и фильтрами"
+              onClick={launchAll}
+            >
+              {busy ? (
+                <Loader2 size={17} className="spin" />
+              ) : (
+                <CheckCheck size={17} />
+              )}
+              {batchRunning
+                ? "Прогон выполняется…"
+                : view === "batch"
+                  ? "Прогнать все заново"
+                  : `Прогнать все (${items.length})`}
+            </button>
+            {view === "catalog" && (
+              <button
+                className="button primary"
+                disabled={loading || busy || !active}
+                onClick={launch}
+              >
+                {busy ? (
+                  <Loader2 size={17} className="spin" />
+                ) : (
+                  <ArrowRight size={17} />
+                )}{" "}
+                {busy ? "Загружаем комплект…" : "Запустить проверку"}
+              </button>
             )}
-            {batchRunning
-              ? "Прогон выполняется…"
-              : view === "batch"
-                ? "Прогнать все заново"
-                : `Прогнать все (${items.length})`}
-          </button>
-          {view === "catalog" &&
-          <button
-            className="button primary"
-            disabled={loading || busy || !active}
-            onClick={launch}
-          >
-            {busy ? (
-              <Loader2 size={17} className="spin" />
-            ) : (
-              <ArrowRight size={17} />
-            )}{" "}
-            {busy ? "Загружаем комплект…" : "Запустить проверку"}
-          </button>}
           </div>
         </footer>
       </section>
@@ -1555,154 +1795,344 @@ function NewCaseModal({
   onClose: () => void;
   onDone: (id: string) => void;
 }) {
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [progress, setProgress] = useState("");
+  const [reportFiles, setReportFiles] = useState<File[]>([]);
+  const [primaryFiles, setPrimaryFiles] = useState<File[]>([]);
+  const [startDate, setStartDate] = useState("");
+  const reportInput = useRef<HTMLInputElement>(null);
+  const primaryInput = useRef<HTMLInputElement>(null);
+  const attempt = useRef<{ id: string; signature: string } | null>(null);
+  const dialog = useDialog(onClose, busy);
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
-    setBusy(true);
     setError("");
-    try {
-      const c = await api<Case>(
-        "/cases",
-        json({
-          title: form.get("title"),
-          contract: form.get("contract"),
-          stage: Number(form.get("stage")),
-          period_start: form.get("start"),
-          period_end: form.get("end"),
-          complete_package: form.get("complete") === "on",
-        }),
+    const allowedReport = /\.(pdf|png|jpe?g)$/i;
+    const allowedPrimary = /\.(pdf|docx|xlsx|png|jpe?g)$/i;
+    const files = [...reportFiles, ...primaryFiles];
+    if (reportFiles.length !== 1 || !primaryFiles.length) {
+      setError("Выберите один отчёт и хотя бы один первичный документ.");
+      return;
+    }
+    if (files.length > 100) {
+      setError(
+        "В одной проверке можно загрузить до 100 файлов, включая отчёт.",
       );
-      for (const role of ["report", "primary"]) {
+      return;
+    }
+    const invalid = files.find(
+      (f) =>
+        !f.size ||
+        f.size > 25 * 1024 * 1024 ||
+        !(reportFiles.includes(f) ? allowedReport : allowedPrimary).test(
+          f.name,
+        ),
+    );
+    if (invalid) {
+      setError(
+        `Файл «${invalid.name}»: проверьте формат и размер. Нужен непустой документ до 25 МБ.`,
+      );
+      return;
+    }
+    const start = String(form.get("start")),
+      end = String(form.get("end"));
+    if (end < start) {
+      setError("Конец периода должен быть не раньше начала.");
+      return;
+    }
+    if (start.slice(0, 4) !== end.slice(0, 4)) {
+      setError(
+        "Выберите период в пределах одного года: сверка проверяет одну годовую строку КФЗ.",
+      );
+      return;
+    }
+    const context = {
+      title: form.get("title"),
+      contract: String(form.get("contract")).trim(),
+      stage: Number(form.get("stage")),
+      period_start: start,
+      period_end: end,
+      complete_package: form.get("complete") === "on",
+    };
+    if (!context.contract) {
+      setError("Укажите номер договора из отчёта.");
+      return;
+    }
+    const signature = JSON.stringify([
+      context,
+      files.map((file) => [file.name, file.size, file.lastModified]),
+    ]);
+    setBusy(true);
+    try {
+      setProgress("Создаём проверку…");
+      if (attempt.current?.signature !== signature) {
+        const created = await api<Case>("/cases", json(context));
+        attempt.current = { id: created.id, signature };
+      }
+      const caseId = attempt.current!.id;
+      // Reuse the draft after a failed request, including a lost upload response.
+      const draft = await api<Case>(`/cases/${caseId}`);
+      if (
+        draft.status === "queued" ||
+        draft.status === "running" ||
+        draft.status === "completed"
+      ) {
+        onDone(caseId);
+        return;
+      }
+      for (const [role, selectedFiles] of [
+        ["report", reportFiles],
+        ["primary", primaryFiles],
+      ] as const) {
+        if (
+          draft.documents?.filter((d) => d.role === role).length ===
+          selectedFiles.length
+        )
+          continue;
+        setProgress(
+          role === "report"
+            ? "Загружаем отчёт…"
+            : `Загружаем первичные документы: ${selectedFiles.length}…`,
+        );
         const body = new FormData();
         body.set("role", role);
-        for (const f of form.getAll(role))
-          if (f instanceof File && f.size) body.append("files", f);
-        await api("/cases/" + c.id + "/documents", { method: "POST", body });
+        selectedFiles.forEach((file) => body.append("files", file));
+        await api(`/cases/${caseId}/documents`, { method: "POST", body });
       }
-      await api("/cases/" + c.id + "/runs", { method: "POST" });
-      onDone(c.id);
+      setProgress("Запускаем сверку…");
+      await api(`/cases/${caseId}/runs`, { method: "POST" });
+      onDone(caseId);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+      setProgress("");
     }
   };
   return (
     <div className="overlay">
       <section
-        className="modal"
+        className="modal new-case-modal"
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-label="Новая проверка"
       >
-        <button
-          className="close"
-          disabled={busy}
-          aria-label="Закрыть"
-          onClick={onClose}
-        >
-          <X />
-        </button>
-        <span className="eyebrow">НОВЫЙ КОМПЛЕКТ</span>
-        <h2>Создать проверку</h2>
-        <p>Укажите область сверки и загрузите документы.</p>
-        <form onSubmit={submit}>
-          <label>
-            Название
-            <input
-              name="title"
-              required
-              defaultValue="Сверка затрат"
-              maxLength={200}
-            />
-          </label>
-          <div className="form-grid">
-            <label>
-              Номер договора
-              <input name="contract" required placeholder="24/03/15-01" />
-            </label>
-            <label>
-              Этап
-              <input
-                name="stage"
-                required
-                type="number"
-                min="1"
-                max="100"
-                defaultValue="3"
-              />
-            </label>
-            <label>
-              Начало периода
-              <input
-                name="start"
-                type="date"
-                required
-                defaultValue="2026-01-01"
-              />
-            </label>
-            <label>
-              Конец периода
-              <input
-                name="end"
-                type="date"
-                required
-                defaultValue="2026-05-31"
-              />
-            </label>
-          </div>
-          <label className="file-input">
-            <FileText size={21} />
-            <span>
-              <strong>Итоговый отчёт КФЗ</strong>
-              <small>Один PDF или скан · до 25 МБ</small>
-            </span>
-            <input
-              name="report"
-              type="file"
-              required
-              accept=".pdf,.png,.jpg,.jpeg"
-            />
-          </label>
-          <label className="file-input">
-            <Files size={21} />
-            <span>
-              <strong>Первичные документы</strong>
-              <small>PDF, DOCX, XLSX, PNG · до 100 файлов</small>
-            </span>
-            <input
-              name="primary"
-              type="file"
-              required
-              multiple
-              accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg"
-            />
-          </label>
-          <label className="checkbox">
-            <input name="complete" type="checkbox" />
-            <span>
-              Подтверждаю полноту комплекта для верхних статей затрат
-              <small>
-                Без этого подтверждения система покажет только суммы по
-                представленным документам.
-              </small>
-            </span>
-          </label>
-          {error && (
-            <p role="alert" className="form-error">
-              {error}
-            </p>
-          )}
-          <button className="button primary full" disabled={busy}>
-            {busy ? (
-              <Loader2 size={18} className="spin" />
-            ) : (
-              <ShieldCheck size={18} />
-            )}{" "}
-            {busy ? "Загружаем документы…" : "Начать сверку"}
+        <header className="new-case-heading">
+          <span className="eyebrow">СВЕРКА ПО ВАШИМ ДОКУМЕНТАМ</span>
+          <h2>Новая проверка</h2>
+          <p>Добавьте документы и укажите, какую строку отчёта проверить.</p>
+          <button
+            className="close"
+            disabled={busy}
+            aria-label="Закрыть"
+            onClick={onClose}
+          >
+            <X />
           </button>
+        </header>
+        <form onSubmit={submit} className="new-case-form">
+          <div className="new-case-fields">
+            <fieldset disabled={busy}>
+              <legend>
+                <span>1</span>Документы
+              </legend>
+              <div className="upload-grid">
+                <div>
+                  <label
+                    className={
+                      "file-input " + (reportFiles.length ? "selected" : "")
+                    }
+                  >
+                    <FileText size={23} />
+                    <span>
+                      <strong>
+                        {reportFiles[0]?.name || "Выберите отчёт КФЗ"}
+                      </strong>
+                      <small>Один PDF, PNG или JPEG · до 25 МБ</small>
+                    </span>
+                    <input
+                      ref={reportInput}
+                      aria-label="Итоговый отчёт КФЗ"
+                      name="report"
+                      type="file"
+                      required
+                      accept=".pdf,.png,.jpg,.jpeg"
+                      onChange={(e) => {
+                        setReportFiles(Array.from(e.target.files || []));
+                        setError("");
+                      }}
+                    />
+                  </label>
+                  {!!reportFiles.length && (
+                    <button
+                      type="button"
+                      className="text-button remove-files"
+                      onClick={() => {
+                        setReportFiles([]);
+                        if (reportInput.current) reportInput.current.value = "";
+                      }}
+                    >
+                      Убрать отчёт
+                    </button>
+                  )}
+                </div>
+                <div>
+                  <label
+                    className={
+                      "file-input " + (primaryFiles.length ? "selected" : "")
+                    }
+                  >
+                    <Files size={23} />
+                    <span>
+                      <strong>
+                        {primaryFiles.length
+                          ? `Выбрано документов: ${primaryFiles.length}`
+                          : "Выберите первичные документы"}
+                      </strong>
+                      <small>
+                        PDF, DOCX, XLSX, PNG, JPEG · до 25 МБ каждый
+                      </small>
+                    </span>
+                    <input
+                      ref={primaryInput}
+                      aria-label="Первичные документы"
+                      name="primary"
+                      type="file"
+                      required
+                      multiple
+                      accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg"
+                      onChange={(e) => {
+                        setPrimaryFiles(Array.from(e.target.files || []));
+                        setError("");
+                      }}
+                    />
+                  </label>
+                  {!!primaryFiles.length && (
+                    <>
+                      <p
+                        className="selected-files"
+                        title={primaryFiles.map((file) => file.name).join("\n")}
+                      >
+                        {primaryFiles
+                          .slice(0, 3)
+                          .map((file) => file.name)
+                          .join(", ")}
+                        {primaryFiles.length > 3
+                          ? ` и ещё ${primaryFiles.length - 3}`
+                          : ""}
+                      </p>
+                      <button
+                        type="button"
+                        className="text-button remove-files"
+                        onClick={() => {
+                          setPrimaryFiles([]);
+                          if (primaryInput.current)
+                            primaryInput.current.value = "";
+                        }}
+                      >
+                        Убрать документы
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </fieldset>
+            <fieldset disabled={busy}>
+              <legend>
+                <span>2</span>Область сверки
+              </legend>
+              <p className="form-help" id="scope-help">
+                Договор исключает чужие документы, этап выбирает строку КФЗ,
+                даты ограничивают период расходов. Перенесите эти данные из
+                отчёта.
+              </p>
+              <label className="form-field">
+                Название проверки
+                <input
+                  name="title"
+                  required
+                  defaultValue="Сверка затрат"
+                  maxLength={200}
+                />
+              </label>
+              <div className="form-grid">
+                <label>
+                  Номер договора
+                  <input
+                    name="contract"
+                    required
+                    placeholder="Например, 24/03/15-01"
+                    maxLength={80}
+                    aria-describedby="scope-help"
+                  />
+                </label>
+                <label>
+                  Этап
+                  <input
+                    name="stage"
+                    required
+                    type="number"
+                    min="1"
+                    max="100"
+                    placeholder="Номер из отчёта"
+                  />
+                </label>
+                <label>
+                  Начало периода
+                  <input
+                    name="start"
+                    type="date"
+                    required
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Конец периода
+                  <input
+                    name="end"
+                    type="date"
+                    required
+                    min={startDate || undefined}
+                  />
+                </label>
+              </div>
+              <label className="checkbox">
+                <input name="complete" type="checkbox" />
+                <span>
+                  Все первичные документы за период загружены
+                  <small>
+                    Отметьте для полного комплекта. При частичной загрузке вывод
+                    будет ограничен подтверждёнными расходами.
+                  </small>
+                </span>
+              </label>
+            </fieldset>
+          </div>
+          <div className="new-case-footer">
+            {error && (
+              <p role="alert" className="form-error">
+                <CircleAlert size={17} />
+                {error}
+              </p>
+            )}
+            <span role="status">
+              {busy
+                ? progress
+                : `${reportFiles.length ? "Отчёт выбран" : "Отчёт не выбран"} · Первичных документов: ${primaryFiles.length}`}
+            </span>
+            <button className="button primary" type="submit" disabled={busy}>
+              {busy ? (
+                <Loader2 size={18} className="spin" />
+              ) : (
+                <ShieldCheck size={18} />
+              )}
+              {busy ? "Подготавливаем…" : "Начать сверку"}
+            </button>
+          </div>
         </form>
       </section>
     </div>
@@ -1725,6 +2155,7 @@ function SourcePanel({
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
     [imageError, setImageError] = useState(false);
+  const dialog = useDialog(onClose, saving);
   const image = /\.(pdf|png|jpe?g)$/i.test(doc.name);
   const review = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -1760,6 +2191,7 @@ function SourcePanel({
     <div className="overlay source-overlay" onClick={onClose}>
       <section
         className="source-panel"
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-label="Первичный документ"
