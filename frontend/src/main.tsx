@@ -484,6 +484,7 @@ function App() {
   const filteredDocs = docs.filter((d) =>
     d.name.toLowerCase().includes(search.toLowerCase()),
   );
+  const showWelcome = !selected && !current && cases.length === 0;
   const visibleMetrics =
     result?.metrics.filter(
       (m) =>
@@ -631,17 +632,16 @@ function App() {
               </p>
             </div>
             <div className="heading-actions">
-              <button className="button example-trigger" onClick={openExample} title="Учебный пример из исходного задания">
+              {!showWelcome && <><button className="button example-trigger" onClick={openExample} title="Учебный пример из исходного задания">
                 <GraduationCap size={17} />Учебный пример
               </button>
               <button className="button" aria-label="Как сделать проверку"
                 title="Как сделать проверку" onClick={() => openNew(true)}>
                 <CircleHelp size={17} />
                 Как сделать проверку
-              </button>
+              </button></>}
               <button
-                className="button"
-                aria-label="Выбрать тестовый кейс"
+                className="button fixtures-mobile-trigger"
                 onClick={() => setFixturesOpen(true)}
               >
                 <Layers3 size={17} />
@@ -682,46 +682,41 @@ function App() {
             </div>
           ) : !current ? (
             <>
-              {!cases.length && (
+              {showWelcome && (
                 <div className="welcome">
-                  <div className="welcome-icon">
-                    <FileCheck2 size={40} />
+                  <div className="welcome-learning-icon" aria-hidden="true">
+                    <GraduationCap size={28} />
                   </div>
-                  <span className="eyebrow">ОТ ДОКУМЕНТА ДО ЗАКЛЮЧЕНИЯ</span>
-                  <h2>Проверьте отчёт по первичным документам</h2>
-                  <p>
-                    Один отчёт КФЗ и подтверждающие документы — в одну проверку.
+                  <span className="eyebrow">ПРАКТИКА С ПОДСКАЗКАМИ</span>
+                  <h2>Начните с учебного примера</h2>
+                  <p className="welcome-description">
+                    Разберитесь, как проходит проверка, на готовом комплекте документов.{" "}
                     <br />
-                    Каждое расхождение можно проследить до первичного документа.
+                    Мы поможем найти расхождение и проверить его по исходным файлам.
                   </p>
+                  <div className="welcome-learning-path" aria-label="Чему вы научитесь">
+                    <span><Files size={16} />Выбрать документы</span>
+                    <span><Search size={16} />Найти расхождение</span>
+                    <span><FileCheck2 size={16} />Проверить источники</span>
+                  </div>
                   <div className="welcome-actions">
                     <button
                       className="button primary"
-                      disabled={busy}
-                      onClick={() => openNew()}
+                      onClick={openExample}
                     >
-                      {busy ? (
-                        <Loader2 className="spin" size={17} />
-                      ) : (
-                        <ArrowRight size={17} />
-                      )}
-                      Загрузить свои документы
+                      <GraduationCap size={18} />
+                      Пройти учебный пример
                     </button>
                     <button
                       className="button"
-                      onClick={() => setFixturesOpen(true)}
+                      disabled={busy}
+                      onClick={() => openNew()}
                     >
-                      <Layers3 size={17} />
-                      Попробовать тестовый кейс
+                      <Upload size={17} />
+                      Загрузить свои документы
                     </button>
                   </div>
-                  <div className="format-list">
-                    <span>PDF</span>
-                    <span>DOCX</span>
-                    <span>XLSX</span>
-                    <span>PNG</span>
-                    <small>Включая сканы</small>
-                  </div>
+                  <p className="welcome-note">Учебный пример можно прервать в любой момент.</p>
                 </div>
               )}
               {!!cases.length && (
