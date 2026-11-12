@@ -28,6 +28,7 @@ import "./style.css";
 import "./ux.css";
 import { FixtureBatchResults, type FixtureBatch } from "./FixtureBatchResults";
 import { useDialog } from "./useDialog";
+import { useReportContext } from "./useReportContext";
 
 type Evidence = {
   text: string;
@@ -1800,7 +1801,7 @@ function NewCaseModal({
   const [progress, setProgress] = useState("");
   const [reportFiles, setReportFiles] = useState<File[]>([]);
   const [primaryFiles, setPrimaryFiles] = useState<File[]>([]);
-  const [startDate, setStartDate] = useState("");
+  const reportContext = useReportContext();
   const reportInput = useRef<HTMLInputElement>(null);
   const primaryInput = useRef<HTMLInputElement>(null);
   const attempt = useRef<{ id: string; signature: string } | null>(null);
@@ -1864,6 +1865,7 @@ function NewCaseModal({
       context,
       files.map((file) => [file.name, file.size, file.lastModified]),
     ]);
+    reportContext.stop();
     setBusy(true);
     try {
       setProgress("Создаём проверку…");
@@ -1961,7 +1963,9 @@ function NewCaseModal({
                       required
                       accept=".pdf,.png,.jpg,.jpeg"
                       onChange={(e) => {
-                        setReportFiles(Array.from(e.target.files || []));
+                        const selected = Array.from(e.target.files || []);
+                        setReportFiles(selected);
+                        void reportContext.inspect(selected[0]);
                         setError("");
                       }}
                     />
@@ -1972,6 +1976,7 @@ function NewCaseModal({
                       className="text-button remove-files"
                       onClick={() => {
                         setReportFiles([]);
+                        void reportContext.inspect();
                         if (reportInput.current) reportInput.current.value = "";
                       }}
                     >
@@ -2046,8 +2051,16 @@ function NewCaseModal({
               </legend>
               <p className="form-help" id="scope-help">
                 Договор исключает чужие документы, этап выбирает строку КФЗ,
-                даты ограничивают период расходов. Перенесите эти данные из
-                отчёта.
+                даты ограничивают период расходов. Найденные параметры можно
+                исправить; пустые поля заполните вручную.
+              </p>
+              <p className="context-recognition" role="status" aria-live="polite">
+                {reportContext.loading && <Loader2 size={16} className="spin" />}
+                {reportContext.loading
+                  ? "Распознаём параметры КФЗ… Можно заполнять поля вручную."
+                  : reportContext.error || (reportContext.recognized
+                    ? "Проверьте найденные значения перед запуском сверки."
+                    : "После загрузки КФЗ попробуем заполнить параметры автоматически.")}
               </p>
               <label className="form-field">
                 Название проверки
@@ -2067,7 +2080,10 @@ function NewCaseModal({
                     placeholder="Например, 24/03/15-01"
                     maxLength={80}
                     aria-describedby="scope-help"
+                    value={reportContext.values.contract}
+                    onChange={(e) => reportContext.change("contract", e.target.value)}
                   />
+                  <small className="context-field-hint">{reportContext.hint("contract")}</small>
                 </label>
                 <label>
                   Этап
@@ -2078,7 +2094,10 @@ function NewCaseModal({
                     min="1"
                     max="100"
                     placeholder="Номер из отчёта"
+                    value={reportContext.values.stage}
+                    onChange={(e) => reportContext.change("stage", e.target.value)}
                   />
+                  <small className="context-field-hint">{reportContext.hint("stage")}</small>
                 </label>
                 <label>
                   Начало периода
@@ -2086,9 +2105,10 @@ function NewCaseModal({
                     name="start"
                     type="date"
                     required
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
+                    value={reportContext.values.period_start}
+                    onChange={(e) => reportContext.change("period_start", e.target.value)}
                   />
+                  <small className="context-field-hint">{reportContext.hint("period_start")}</small>
                 </label>
                 <label>
                   Конец периода
@@ -2096,8 +2116,11 @@ function NewCaseModal({
                     name="end"
                     type="date"
                     required
-                    min={startDate || undefined}
+                    min={reportContext.values.period_start || undefined}
+                    value={reportContext.values.period_end}
+                    onChange={(e) => reportContext.change("period_end", e.target.value)}
                   />
+                  <small className="context-field-hint">{reportContext.hint("period_end")}</small>
                 </label>
               </div>
               <label className="checkbox">

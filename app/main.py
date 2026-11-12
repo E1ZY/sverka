@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import threading
 import zipfile
 from contextlib import asynccontextmanager
@@ -26,6 +27,7 @@ from .domain import ARTICLES, money
 from .extractors import SUPPORTED, digest, page_image
 from .pipeline import document_dict, enqueue, loop
 from .uploads import validate_file
+from .report_context import extract_report_context
 from .fixtures import compare_fixture, fixture_inputs, list_fixtures, load_oracle
 from .fixture_batches import batch_dict
 
@@ -125,6 +127,30 @@ def create_case(body: NewCase):
         session.add(case)
         session.flush()
         return case_dict(case)
+
+
+@app.post('/api/reports/context')
+def suggest_report_context(file: UploadFile = File(...)):
+    """Inspect an upload before a case exists, without keeping a copy or creating a run."""
+    ext = Path(file.filename or '').suffix.lower()
+    if ext not in {'.pdf', '.png', '.jpg', '.jpeg'}:
+        raise HTTPException(400, 'Для отчёта нужен PDF, PNG или JPEG')
+    with tempfile.TemporaryDirectory(prefix='report-context-', dir=DATA) as directory:
+        path = Path(directory) / ('report' + ext)
+        size = 0
+        with path.open('wb') as out:
+            while chunk := file.file.read(1024*1024):
+                size += len(chunk)
+                if size > MAX_FILE_BYTES:
+                    raise HTTPException(413, 'Файл превышает 25 МБ')
+                out.write(chunk)
+        if not size:
+            raise HTTPException(400, 'Пустой файл')
+        try:
+            return extract_report_context(path)
+        except Exception:
+            logging.getLogger(__name__).warning('Report context extraction failed', exc_info=True)
+            raise HTTPException(422, 'Не удалось прочитать параметры КФЗ. Заполните их вручную.')
 
 
 @app.get('/api/cases/{case_id}')

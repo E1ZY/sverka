@@ -776,3 +776,27 @@ button.stat:hover {
     font-size: 11px;
   }
 }
+.context-recognition {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #607086;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+.context-recognition svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.context-field-hint {
+  display: block;
+  margin-top: 6px;
+  color: #607086;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+}
+.context-field-hint:empty {
+  display: none;
+}
