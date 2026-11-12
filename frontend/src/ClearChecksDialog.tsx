@@ -2,14 +2,16 @@ import { useState } from "react";
 import { CircleAlert, Loader2, Trash2, X } from "lucide-react";
 import { useDialog } from "./useDialog";
 
-export function ClearChecksDialog({ count, activeCount, onClose, onConfirm }: {
+export function ClearChecksDialog({ count, activeCount, caseTitle, onClose, onConfirm }: {
   count: number;
   activeCount: number;
+  caseTitle?: string;
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const single = caseTitle !== undefined;
   const dialog = useDialog(onClose, busy);
   const confirm = async () => {
     if (busy) return;
@@ -30,9 +32,10 @@ export function ClearChecksDialog({ count, activeCount, onClose, onConfirm }: {
       aria-labelledby="clear-checks-title" aria-describedby="clear-checks-warning">
       <button type="button" className="close" aria-label="Закрыть предупреждение" disabled={busy} onClick={onClose}><X /></button>
       <span className="clear-checks-icon"><Trash2 size={25} /></span>
-      <h2 id="clear-checks-title">Очистить последние проверки?</h2>
-      <p id="clear-checks-warning">Будут удалены проверки из списка последних: <strong>{count}</strong>,
-        а также их загруженные копии документов, результаты и история запусков. <strong>Восстановить их не получится.</strong></p>
+      <h2 id="clear-checks-title">{single ? "Удалить проверку?" : "Очистить последние проверки?"}</h2>
+      <p id="clear-checks-warning">{single
+        ? <>Будет удалена проверка <strong className="delete-check-name">«{caseTitle}»</strong> вместе с загруженными копиями документов, результатами и историей запусков. <strong>Восстановить её не получится.</strong></>
+        : <>Будут удалены проверки из списка последних: <strong>{count}</strong>, а также их загруженные копии документов, результаты и история запусков. <strong>Восстановить их не получится.</strong></>}</p>
       <p className="muted">Исходные файлы на вашем компьютере сохранятся.</p>
       {activeCount > 0 && <p className="notice">Выполняющиеся проверки останутся в списке: {activeCount}.</p>}
       {error && <p className="form-error" role="alert"><CircleAlert size={17} />{error}</p>}
@@ -40,7 +43,7 @@ export function ClearChecksDialog({ count, activeCount, onClose, onConfirm }: {
         <button type="button" className="button" autoFocus disabled={busy} onClick={onClose}>Отмена</button>
         <button type="button" className="button danger" disabled={busy} onClick={confirm}>
           {busy ? <Loader2 size={17} className="spin" /> : <Trash2 size={17} />}
-          {busy ? "Удаляем проверки…" : "Удалить проверки"}
+          {busy ? (single ? "Удаляем проверку…" : "Удаляем проверки…") : (single ? "Удалить проверку" : "Удалить проверки")}
         </button>
       </div>
     </section>

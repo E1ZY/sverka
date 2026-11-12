@@ -75,6 +75,19 @@ def test_clear_removes_only_confirmed_cases_with_files_results_and_reviews(clien
     assert remove(client, [first, first, second]).json() == {'deleted_ids': [], 'cleanup_failed': []}
 
 
+def test_delete_single_check_preserves_other_check_and_its_history(client):
+    target, target_dir = make_case(client, 'Удалить одну')
+    keep, keep_dir = make_case(client, 'Оставить другую')
+    before = client.get('/api/cases/'+keep).json()
+    response = remove(client, [target])
+    assert response.status_code == 200
+    assert response.json() == {'deleted_ids': [target], 'cleanup_failed': []}
+    assert not target_dir.exists()
+    assert (keep_dir/'uploaded.pdf').exists()
+    assert client.get('/api/cases/'+target).status_code == 404
+    assert client.get('/api/cases/'+keep).json() == before
+
+
 @pytest.mark.parametrize('active_status', ['queued', 'running'])
 def test_active_case_blocks_entire_request_without_partial_deletion(client, active_status):
     finished, finished_dir = make_case(client)

@@ -249,7 +249,7 @@ function App() {
     [caseQuery, setCaseQuery] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [clearChecks, setClearChecks] = useState<{ ids: string[]; activeCount: number } | null>(null),
+    [clearChecks, setClearChecks] = useState<{ ids: string[]; activeCount: number; caseTitle?: string } | null>(null),
     [newOpen, setNewOpen] = useState(false),
     [newTutorial, setNewTutorial] = useState(false),
     [example, setExample] = useState<TaskExample | null>(null),
@@ -335,6 +335,10 @@ function App() {
     if (!clearableCases.length) return;
     setClearChecks({ ids: clearableCases.map((item) => item.id), activeCount: cases.length - clearableCases.length });
   };
+  const openDeleteCheck = (item: Case) => {
+    if (busy || ["queued", "running"].includes(item.status)) return;
+    setClearChecks({ ids: [item.id], activeCount: 0, caseTitle: item.title });
+  };
   const confirmClearChecks = async () => {
     if (!clearChecks) return;
     const ids = new Set(clearChecks.ids);
@@ -343,7 +347,7 @@ function App() {
     });
     ids.forEach((id) => removedCaseIds.current.add(id));
     setCases((items) => items.filter((item) => !ids.has(item.id)));
-    setCaseQuery("");
+    if (clearChecks.caseTitle === undefined) setCaseQuery("");
     if (selection.current && ids.has(selection.current)) overview();
     if (example?.caseId && ids.has(example.caseId)) cancelExample();
     setExampleSuccess(null);
@@ -557,8 +561,8 @@ function App() {
         </label>
         <div className="case-list">
           {filteredCases.map((c) => (
+            <div className={"case-list-row " + (c.id === selected ? "selected" : "")} key={c.id}>
             <button
-              key={c.id}
               className={"case-link " + (c.id === selected ? "selected" : "")}
               onClick={() => choose(c.id)}
               title={c.title}
@@ -578,6 +582,12 @@ function App() {
                 </small>
               </span>
             </button>
+            <button className="case-delete" aria-label={`Удалить проверку «${c.title}»`}
+              title={["queued", "running"].includes(c.status) ? "Дождитесь завершения проверки" : "Удалить проверку"}
+              disabled={busy || ["queued", "running"].includes(c.status)} onClick={() => openDeleteCheck(c)}>
+              <Trash2 size={15} />
+            </button>
+            </div>
           ))}
           {!cases.length && (
             <p className="sidebar-empty">Здесь появятся ваши проверки</p>
@@ -736,8 +746,8 @@ function App() {
                     </div>
                   </div>
                   {filteredCases.map((c) => (
+                    <div className="overview-case-row" key={c.id}>
                     <button
-                      key={c.id}
                       className="overview-case"
                       onClick={() => choose(c.id)}
                     >
@@ -757,6 +767,12 @@ function App() {
                       </span>
                       <ChevronRight size={17} />
                     </button>
+                    <button className="case-delete" aria-label={`Удалить проверку «${c.title}»`}
+                      title={["queued", "running"].includes(c.status) ? "Дождитесь завершения проверки" : "Удалить проверку"}
+                      disabled={busy || ["queued", "running"].includes(c.status)} onClick={() => openDeleteCheck(c)}>
+                      <Trash2 size={17} />
+                    </button>
+                    </div>
                   ))}
                   {!filteredCases.length && (
                     <div className="empty-small">
@@ -799,6 +815,9 @@ function App() {
                       : current.status === "failed"
                         ? "Ошибка обработки"
                         : "Комплект документов"}
+                  <button className="icon-button delete-current-check" aria-label="Удалить эту проверку"
+                    title={running ? "Дождитесь завершения проверки" : "Удалить проверку"}
+                    disabled={busy || running} onClick={() => openDeleteCheck(current)}><Trash2 size={17} /></button>
                 </div>
               </div>
               {result && tab === "checks" && (
@@ -1442,6 +1461,7 @@ function App() {
       {example && example.step >= 0 && <CheckTutorial root={shell} steps={exampleSteps} step={example.step} stepOffset={5} totalSteps={11} label="Учебный пример" exitLabel="Выйти"
         onStepChange={changeExampleStep} onClose={cancelExample} onFinish={finishExample} />}
       {clearChecks && <ClearChecksDialog count={clearChecks.ids.length} activeCount={clearChecks.activeCount}
+        caseTitle={clearChecks.caseTitle}
         onClose={() => setClearChecks(null)} onConfirm={confirmClearChecks} />}
       {exampleSuccess && <TaskExampleSuccess {...exampleSuccess} onClose={() => setExampleSuccess(null)}
         onNew={() => { setExampleSuccess(null); openNew(); }} />}
@@ -1854,7 +1874,7 @@ function FixtureCatalog({
                       <p className="fixture-scope supported">
                         <ShieldCheck size={17} />
                         <span>
-                          Сценарий входит в регрессионную проверку MVP.
+                          Сценарий входит в проверку работы приложения на тестовых примерах.
                         </span>
                       </p>
                     )}

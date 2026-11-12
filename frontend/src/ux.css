@@ -60,6 +60,74 @@
 .clear-checks-trigger {
   color: #a73c3c;
 }
+.case-list-row {
+  display: flex;
+  align-items: center;
+  border-radius: 5px;
+}
+.case-list-row.selected {
+  background: #304b69;
+}
+.case-list-row .case-link {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+}
+.case-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 36px;
+  padding: 0;
+  border-radius: 5px;
+}
+.case-delete:disabled,
+.delete-current-check:disabled {
+  cursor: default;
+}
+.sidebar .case-delete {
+  color: #b0c0d2;
+}
+.sidebar .case-delete:hover:not(:disabled) {
+  color: #ffc5c5;
+  background: #573645;
+}
+.overview-case-row {
+  display: flex;
+  align-items: stretch;
+  border-top: 1px solid #e5ebf2;
+}
+.overview-case-row .overview-case {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  border-top: 0;
+}
+.overview-case-row .case-delete {
+  align-self: center;
+  margin-right: 14px;
+  color: #a73c3c;
+}
+.overview-case-row .case-delete:hover:not(:disabled),
+.delete-current-check:hover:not(:disabled) {
+  background: #fceeed;
+}
+.overview-case strong,
+.delete-check-name {
+  overflow-wrap: anywhere;
+}
+.delete-current-check {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 10px;
+  color: #a73c3c;
+  border-radius: 5px;
+}
 .clear-checks-overlay {
   z-index: 120;
 }
