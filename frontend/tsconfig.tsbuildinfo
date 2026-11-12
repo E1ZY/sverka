@@ -1,1 +1,1 @@
-{"root":["./src/fixturebatchresults.tsx","./src/main.tsx","./vite.config.ts"],"version":"5.8.3"}
+{"root":["./src/checktutorial.tsx","./src/clearchecksdialog.tsx","./src/dateinput.tsx","./src/documentimagepreview.tsx","./src/fixturebatchresults.tsx","./src/taskexampletutorial.tsx","./src/main.tsx","./src/usedialog.ts","./src/usereportcontext.ts","./vite.config.ts"],"version":"5.8.3"}

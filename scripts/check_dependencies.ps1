@@ -243,7 +243,7 @@ print(json.dumps(dict(missing=errors),ensure_ascii=True))
         else { Add-Check 'OCR rus + eng' 'ERROR' $ocr.error '.\.venv\Scripts\python.exe scripts/setup_ocr.py' }
     } else { Add-Check 'Пакеты и OCR проекта' 'SKIP' 'Проверка доступна после установки Python.' }
     if (Test-Path -LiteralPath (Join-Path $projectRoot 'frontend\dist\index.html') -PathType Leaf) {
-        Add-Check 'Сборка интерфейса' 'OK' 'frontend/dist/index.html существует; актуальность исходникам проверяет npm run build.'
+        Add-Check 'Сборка интерфейса' 'OK' 'frontend/dist/index.html существует; start.ps1 проверит актуальность и при необходимости пересоберёт интерфейс.'
     } else { Add-Check 'Сборка интерфейса' 'ERROR' 'Готовый интерфейс не найден.' 'В frontend выполните npm.cmd ci, затем npm.cmd run build.' }
 }
 
