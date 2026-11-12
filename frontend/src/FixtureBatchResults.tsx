@@ -1,4 +1,5 @@
 import { CheckCheck, ChevronRight, CircleAlert, Loader2 } from "lucide-react";
+import { useState } from "react";
 
 type BatchItem = {
   fixture_id: string;
@@ -48,6 +49,16 @@ export function FixtureBatchResults({
   onOpen: (id: string) => void;
 }) {
   const running = batch.status === "running";
+  const [filter, setFilter] = useState("all");
+  const visible = batch.items.filter(
+    (item) =>
+      filter === "all" ||
+      (filter === "errors"
+        ? ["error", "failed"].includes(item.status)
+        : filter === "known"
+          ? item.status === "known_limitation"
+          : item.status === "unexpected_pass"),
+  );
   return (
     <div className="fixture-batch-panel">
       <div className="fixture-batch-overview" role="status" aria-live="polite">
@@ -69,8 +80,11 @@ export function FixtureBatchResults({
           <span className="known_limitation">
             <strong>{batch.counts.known_limitations}</strong>Ограничения MVP
           </span>
-          <span className={batch.counts.failed + batch.counts.errors ? "error" : ""}>
-            <strong>{batch.counts.failed + batch.counts.errors}</strong>Новые ошибки
+          <span
+            className={batch.counts.failed + batch.counts.errors ? "error" : ""}
+          >
+            <strong>{batch.counts.failed + batch.counts.errors}</strong>Новые
+            ошибки
           </span>
           {batch.counts.unexpected_passes > 0 && (
             <span className="unexpected_pass">
@@ -85,13 +99,59 @@ export function FixtureBatchResults({
             : "Откройте кейс, чтобы посмотреть расчёт, источники и отличия от эталона."}
         </p>
       </div>
-      <div className="fixture-batch-list" aria-label="Результаты общего прогона">
-        {batch.items.map((item) => (
-          <div className={"fixture-batch-row " + item.status} key={item.fixture_id}>
+      <div className="suite-filters filters" aria-label="Фильтр общего прогона">
+        {[
+          ["all", `Все (${batch.total})`],
+          [
+            "errors",
+            `Новые ошибки (${batch.counts.errors + batch.counts.failed})`,
+          ],
+          ["known", `Ограничения (${batch.counts.known_limitations})`],
+          ...(batch.counts.unexpected_passes
+            ? [
+                [
+                  "fixed",
+                  `Не воспроизвелись (${batch.counts.unexpected_passes})`,
+                ],
+              ]
+            : []),
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            className={filter === value ? "active" : ""}
+            aria-pressed={filter === value}
+            onClick={() => setFilter(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div
+        className="fixture-batch-list"
+        aria-label="Результаты общего прогона"
+      >
+        {!visible.length && (
+          <div className="empty-small">
+            <CheckCheck size={25} />
+            <p>
+              {running
+                ? "В этой группе пока нет результатов. Прогон продолжается."
+                : filter === "errors"
+                  ? "Новых ошибок нет"
+                  : "В этой группе нет кейсов"}
+            </p>
+          </div>
+        )}
+        {visible.map((item) => (
+          <div
+            className={"fixture-batch-row " + item.status}
+            key={item.fixture_id}
+          >
             <span className="fixture-batch-icon">
               {item.status === "running" ? (
                 <Loader2 size={19} className="spin" />
-              ) : item.status === "passed" || item.status === "unexpected_pass" ? (
+              ) : item.status === "passed" ||
+                item.status === "unexpected_pass" ? (
                 <CheckCheck size={19} />
               ) : item.status === "queued" ? (
                 <span className="batch-queued-dot" />
