@@ -8,6 +8,7 @@ import {
   CheckCheck,
   ChevronRight,
   CircleAlert,
+  CircleHelp,
   Clock3,
   FileCheck2,
   Files,
@@ -29,6 +30,8 @@ import "./ux.css";
 import { FixtureBatchResults, type FixtureBatch } from "./FixtureBatchResults";
 import { useDialog } from "./useDialog";
 import { useReportContext } from "./useReportContext";
+import { CheckTutorial } from "./CheckTutorial";
+import { FormTasks, LessonQuestion, PracticeIntro, PracticePanel, usePracticeLesson, type Help } from "./PracticeLesson";
 
 type Evidence = {
   text: string;
@@ -243,14 +246,25 @@ function App() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
     [newOpen, setNewOpen] = useState(false),
+    [newTutorial, setNewTutorial] = useState(false),
+    [learningOpen, setLearningOpen] = useState(false),
+    [help, setHelp] = useState<Help | null>(null),
     [fixturesOpen, setFixturesOpen] = useState(false),
     [detail, setDetail] = useState<Metric | null>(null),
     [source, setSource] = useState<{ doc: Doc; evidence?: Evidence } | null>(
       null,
     );
+  const appRoot = useRef<HTMLDivElement>(null);
+  const practice = usePracticeLesson();
+  const lesson = practice.progress;
+  const learning = !!lesson && !lesson.hidden && selected === lesson.caseId;
   const selection = useRef(selected);
   selection.current = selected;
   const detailDialog = useDialog(() => setDetail(null), false, !!detail);
+  const openNew = (tutorial = false) => {
+    setNewTutorial(tutorial);
+    setNewOpen(true);
+  };
   const refresh = async () => {
     setCases(await api<Case[]>("/cases"));
     if (selected && selection.current === selected) {
@@ -275,6 +289,7 @@ function App() {
     return () => clearInterval(id);
   }, [running, selected]);
   const choose = (id: string) => {
+    setHelp(null);
     if (!cases.some((item) => item.id === id)) setCaseQuery("");
     if (selection.current !== id) setCurrent(null);
     else refresh().catch((e) => setError(e.message));
@@ -289,6 +304,7 @@ function App() {
     setError("");
   };
   const overview = () => {
+    setHelp(null);
     selection.current = null;
     setSelected(null);
     setCurrent(null);
@@ -315,11 +331,82 @@ function App() {
       await refresh();
     });
   const result = current?.result;
+  useEffect(() => {
+    if (learning && current?.id === lesson?.caseId && current.active_run_id && current.active_run_id !== lesson.runId) {
+      practice.resetRun(current.id, current.active_run_id);
+    }
+  }, [current?.id, current?.active_run_id, lesson?.caseId, lesson?.runId, learning]);
+  const startPractice = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const created = await api<{ case_id: string; run_id: string }>("/demo", { method: "POST" });
+      practice.begin(created.case_id, created.run_id);
+      setLearningOpen(false);
+      choose(created.case_id);
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  const resumePractice = async () => {
+    if (!lesson) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api<Case>("/cases/" + encodeURIComponent(lesson.caseId));
+      practice.resume();
+      setLearningOpen(false);
+      choose(lesson.caseId);
+    } catch {
+      setError("Не удалось открыть учебную проверку. Попробуйте ещё раз или начните новую практику.");
+    } finally { setBusy(false); }
+  };
+  const inspectMetric = (metric: Metric) => {
+    setHelp(null);
+    setDetail(metric);
+    if (learning && metric.status === "MISMATCH" && metric.code !== "total") practice.openMetric(metric.code);
+  };
   const docs = result?.documents || current?.documents || [];
   const report = docs.find((d) => d.role === "report");
   const showSource = (id: string, evidence?: Evidence) => {
     const doc = docs.find((d) => d.id === id);
-    if (doc) setSource({ doc, evidence });
+    if (doc) {
+      setHelp(null);
+      setSource({ doc, evidence });
+      if (learning && detail?.code === lesson?.metric && detail.status === "MISMATCH" && evidence) {
+        if (doc.role === "report" && detail.report_evidence === evidence) practice.openSource("report", detail.code);
+        if (doc.role === "primary" && detail.terms.some((t) => t.document_id === id)) practice.openSource("source", detail.code);
+      }
+    }
+  };
+  const learningMetric = result?.metrics.find((m) => m.code === lesson?.metric);
+  const lessonQuestion = learning && lesson?.metric && lesson.report && lesson.source && learningMetric
+    ? <LessonQuestion actual={learningMetric.actual} expected={learningMetric.expected} answered={lesson.answered}
+      feedback={practice.feedback} onAnswer={(answer) => practice.answer(answer, learningMetric.delta)} /> : null;
+  const showLearningHelp = (target: "metrics" | "report" | "sources") => {
+    setSource(null);
+    setTab("checks");
+    setFilter("all");
+    if (target === "metrics") {
+      setDetail(null);
+      setHelp({ target: "lesson-metrics", title: "Отберите статьи с расхождением",
+        text: "Включите фильтр «Расхождения», затем откройте отдельную статью затрат. Общий итог объединяет несколько статей — начните с одной из них." });
+    } else if (learningMetric) {
+      setDetail(learningMetric);
+      setHelp(target === "report"
+        ? { target: "lesson-report", title: "Откройте исходную сумму", text: "Эта кнопка откроет КФЗ на фрагменте, из которого прочитано значение выбранной статьи. Сверьте сумму с колонкой «В отчёте»." }
+        : { target: "lesson-sources", title: "Проверьте подтверждающий документ", text: "Откройте одно из слагаемых расчёта. Подтверждённая сумма складывается из всех учтённых операций, а не из одного документа." });
+    }
+  };
+  const returnToLesson = () => {
+    setSource(null);
+    setDetail(null);
+    setHelp(null);
+    setTab("checks");
+    requestAnimationFrame(() => {
+      const panel = document.querySelector<HTMLElement>(".practice-panel");
+      panel?.scrollIntoView({ block: "start", behavior: "instant" });
+      panel?.focus({ preventScroll: true });
+    });
   };
   const primaryMetrics =
     result?.metrics.filter((m) => m.code !== "total") || [];
@@ -367,7 +454,7 @@ function App() {
     ) || [];
 
   return (
-    <div className="shell">
+    <div className="shell" ref={appRoot}>
       <aside className="sidebar">
         <a
           className="brand"
@@ -413,7 +500,7 @@ function App() {
         </button>
         <div className="sidebar-section">
           <span>ПОСЛЕДНИЕ ПРОВЕРКИ</span>
-          <button aria-label="Новая проверка" onClick={() => setNewOpen(true)}>
+          <button aria-label="Новая проверка" onClick={() => openNew()}>
             <Plus size={16} />
           </button>
         </div>
@@ -457,13 +544,6 @@ function App() {
             <p className="sidebar-empty">Проверки не найдены</p>
           )}
         </div>
-        <div className="sidebar-bottom">
-          <ShieldCheck size={19} />
-          <div>
-            Данные под вашим контролем
-            <small>Локальная обработка документов</small>
-          </div>
-        </div>
       </aside>
       <main>
         <header className="topbar">
@@ -479,10 +559,6 @@ function App() {
                     : "Результаты"
                 : "Рабочее пространство"}
             </strong>
-          </div>
-          <div className="local">
-            <span />
-            Локальный контур
           </div>
         </header>
         <div className="main-content">
@@ -503,6 +579,11 @@ function App() {
               </p>
             </div>
             <div className="heading-actions">
+              <button className="button" aria-label="Как сделать проверку"
+                title="Как сделать проверку" onClick={() => { setError(""); setLearningOpen(true); }}>
+                <CircleHelp size={17} />
+                Как сделать проверку
+              </button>
               <button
                 className="button"
                 aria-label="Выбрать тестовый кейс"
@@ -514,7 +595,7 @@ function App() {
               <button
                 className="button primary"
                 aria-label="Новая проверка"
-                onClick={() => setNewOpen(true)}
+                onClick={() => openNew()}
               >
                 <Plus size={17} />
                 Новая проверка
@@ -530,6 +611,9 @@ function App() {
               </button>
             </div>
           )}
+          {learning && lesson && <PracticePanel progress={lesson} ready={!!result && !running} failed={current?.status === "failed"}
+            onWhere={showLearningHelp} onHide={practice.hide} onRetry={start}
+            onOwn={() => { practice.hide(); openNew(true); }}>{!detail && !source ? lessonQuestion : null}</PracticePanel>}
           {!current && selected ? (
             <div className="panel empty-small" role="status">
               <Loader2 className="spin" />
@@ -553,7 +637,7 @@ function App() {
                     <button
                       className="button primary"
                       disabled={busy}
-                      onClick={() => setNewOpen(true)}
+                      onClick={() => openNew()}
                     >
                       {busy ? (
                         <Loader2 className="spin" size={17} />
@@ -875,6 +959,7 @@ function App() {
                         <div
                           className="filters"
                           aria-label="Фильтр результатов"
+                          data-tutorial="lesson-metrics"
                         >
                           {[
                             ["all", "Все"],
@@ -914,12 +999,12 @@ function App() {
                                     ? "has-issue "
                                     : "") + (m.code === "total" ? "total" : "")
                                 }
-                                onClick={() => setDetail(m)}
+                                onClick={() => inspectMetric(m)}
                                 tabIndex={0}
                                 onKeyDown={(e) => {
                                   if (e.key === "Enter" || e.key === " ") {
                                     e.preventDefault();
-                                    setDetail(m);
+                                    inspectMetric(m);
                                   }
                                 }}
                               >
@@ -1156,6 +1241,7 @@ function App() {
       </main>
       {newOpen && (
         <NewCaseModal
+          initialTutorial={newTutorial}
           onClose={() => setNewOpen(false)}
           onDone={(id) => {
             setNewOpen(false);
@@ -1195,6 +1281,16 @@ function App() {
             <span className="eyebrow">РАСЧЁТ ПОКАЗАТЕЛЯ · {detail.code}</span>
             <h2>{detail.name}</h2>
             <Badge status={detail.status} />
+            {learning && <div className="lesson-context" role="status">
+              {detail.code === "total" ? "Это общий итог. Для учебной задачи откройте отдельную статью с расхождением."
+                : detail.status !== "MISMATCH" ? "У этой статьи не найдено расхождение. Попробуйте статью со статусом «Расхождение»."
+                : "Статья с расхождением найдена. Теперь проверьте исходную сумму в КФЗ и одно из слагаемых по первичным документам."}
+              <button className="text-button" onClick={() => showLearningHelp(
+                detail.status === "MISMATCH" && detail.code !== "total"
+                  ? !lesson?.report ? "report" : !lesson.source ? "sources" : "metrics"
+                  : "metrics",
+              )}>Показать где</button>
+            </div>}
             <div className="detail-values">
               <div>
                 <small>В отчёте</small>
@@ -1221,6 +1317,7 @@ function App() {
             {report && detail.report_evidence && (
               <button
                 className="report-link"
+                data-tutorial="lesson-report"
                 onClick={() => showSource(report.id, detail.report_evidence)}
               >
                 <FileText size={18} />
@@ -1236,7 +1333,7 @@ function App() {
                     <button
                       className="term"
                       key={m.code}
-                      onClick={() => setDetail(m)}
+                      onClick={() => inspectMetric(m)}
                     >
                       <div>
                         <strong>
@@ -1248,9 +1345,10 @@ function App() {
                       <ChevronRight size={17} />
                     </button>
                   ))
-              : detail.terms.map((t) => (
+              : detail.terms.map((t, index) => (
                   <button
                     className="term"
+                    data-tutorial={index === 0 ? "lesson-sources" : undefined}
                     key={t.document_id}
                     onClick={() => showSource(t.document_id, t.evidence)}
                   >
@@ -1279,6 +1377,13 @@ function App() {
               Ожидаемое значение — сумма уникальных операций после проверки
               договора, периода и назначения расходов.
             </p>
+            {learning && detail.code === lesson?.metric && <>
+              <div className="lesson-context">
+                {!lesson.report && <p>Следующая задача: откройте значение в КФЗ. Так можно проверить распознавание исходной суммы. <button className="text-button" onClick={() => showLearningHelp("report")}>Показать где</button></p>}
+                {!lesson.source && <p>Откройте подтверждающий документ из расчёта. <button className="text-button" onClick={() => showLearningHelp("sources")}>Показать где</button></p>}
+                {lesson.report && lesson.source && lessonQuestion}
+              </div>
+            </>}
           </section>
         </div>
       )}
@@ -1292,8 +1397,18 @@ function App() {
             setDetail(null);
             await refresh();
           }}
+          lessonContent={learning && detail?.code === lesson?.metric ? <div className="lesson-context">
+            <strong>{source.doc.role === "report" ? "Значение из КФЗ открыто" : "Подтверждающий документ открыт"}</strong>
+            <p>{source.doc.role === "report" ? "Сверьте выделенный фрагмент с суммой в колонке «В отчёте». Это исходное значение, которое мы сравниваем с документами."
+              : "Это одно из слагаемых. Полная сумма по первичке складывается из всех учтённых операций выбранной статьи."}</p>
+            <button className="text-button" onClick={returnToLesson}>К задачам обучения</button>
+          </div> : undefined}
         />
       )}
+      {learningOpen && <PracticeIntro onClose={() => setLearningOpen(false)} busy={busy} error={error}
+        onStart={startPractice} onOwn={() => { setLearningOpen(false); openNew(true); }}
+        onResume={lesson ? resumePractice : undefined} />}
+      {help && <CheckTutorial root={appRoot} {...help} onClose={() => setHelp(null)} />}
     </div>
   );
 }
@@ -1792,13 +1907,17 @@ function FixtureCatalog({
 function NewCaseModal({
   onClose,
   onDone,
+  initialTutorial = false,
 }: {
   onClose: () => void;
   onDone: (id: string) => void;
+  initialTutorial?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
+  const [tutorialOpen, setTutorialOpen] = useState(initialTutorial);
+  const [formHelp, setFormHelp] = useState<Help | null>(null);
   const [reportFiles, setReportFiles] = useState<File[]>([]);
   const [primaryFiles, setPrimaryFiles] = useState<File[]>([]);
   const reportContext = useReportContext();
@@ -1866,6 +1985,8 @@ function NewCaseModal({
       files.map((file) => [file.name, file.size, file.lastModified]),
     ]);
     reportContext.stop();
+    setTutorialOpen(false);
+    setFormHelp(null);
     setBusy(true);
     try {
       setProgress("Создаём проверку…");
@@ -1926,6 +2047,10 @@ function NewCaseModal({
           <span className="eyebrow">СВЕРКА ПО ВАШИМ ДОКУМЕНТАМ</span>
           <h2>Новая проверка</h2>
           <p>Добавьте документы и укажите, какую строку отчёта проверить.</p>
+          <button type="button" className="tutorial-start" data-tutorial-start
+            disabled={busy} aria-expanded={tutorialOpen} onClick={() => setTutorialOpen(!tutorialOpen)}>
+            <CircleHelp size={16} />Помощь с заполнением
+          </button>
           <button
             className="close"
             disabled={busy}
@@ -1936,13 +2061,18 @@ function NewCaseModal({
           </button>
         </header>
         <form onSubmit={submit} className="new-case-form">
-          <div className="new-case-fields">
+            <div className="new-case-fields">
+            {tutorialOpen && <FormTasks onWhere={setFormHelp} onClose={() => setTutorialOpen(false)} tasks={[
+              { target: "report", title: "Добавить КФЗ", done: reportFiles.length === 1 && reportFiles[0].size > 0 && reportFiles[0].size <= 25 * 1024 * 1024 && /\.(pdf|png|jpe?g)$/i.test(reportFiles[0].name) },
+              { target: "scope", title: "Заполнить параметры", done: !!reportContext.values.contract.trim() && Number(reportContext.values.stage) >= 1 && Number(reportContext.values.stage) <= 100 && Number.isInteger(Number(reportContext.values.stage)) && !!reportContext.values.period_start && !!reportContext.values.period_end && reportContext.values.period_start <= reportContext.values.period_end && reportContext.values.period_start.slice(0,4) === reportContext.values.period_end.slice(0,4) },
+              { target: "primary", title: "Добавить первичные документы", done: primaryFiles.length > 0 && primaryFiles.every((f) => f.size > 0 && f.size <= 25 * 1024 * 1024 && /\.(pdf|docx|xlsx|png|jpe?g)$/i.test(f.name)) },
+            ]} />}
             <fieldset disabled={busy}>
               <legend>
                 <span>1</span>Документы
               </legend>
               <div className="upload-grid">
-                <div>
+                <div data-tutorial="report">
                   <label
                     className={
                       "file-input " + (reportFiles.length ? "selected" : "")
@@ -1984,7 +2114,7 @@ function NewCaseModal({
                     </button>
                   )}
                 </div>
-                <div>
+                <div data-tutorial="primary">
                   <label
                     className={
                       "file-input " + (primaryFiles.length ? "selected" : "")
@@ -2071,7 +2201,7 @@ function NewCaseModal({
                   maxLength={200}
                 />
               </label>
-              <div className="form-grid">
+              <div className="form-grid" data-tutorial="scope">
                 <label>
                   Номер договора
                   <input
@@ -2123,7 +2253,7 @@ function NewCaseModal({
                   <small className="context-field-hint">{reportContext.hint("period_end")}</small>
                 </label>
               </div>
-              <label className="checkbox">
+              <label className="checkbox" data-tutorial="complete">
                 <input name="complete" type="checkbox" />
                 <span>
                   Все первичные документы за период загружены
@@ -2147,7 +2277,7 @@ function NewCaseModal({
                 ? progress
                 : `${reportFiles.length ? "Отчёт выбран" : "Отчёт не выбран"} · Первичных документов: ${primaryFiles.length}`}
             </span>
-            <button className="button primary" type="submit" disabled={busy}>
+            <button className="button primary" type="submit" disabled={busy} data-tutorial="submit">
               {busy ? (
                 <Loader2 size={18} className="spin" />
               ) : (
@@ -2157,6 +2287,7 @@ function NewCaseModal({
             </button>
           </div>
         </form>
+        {formHelp && <CheckTutorial root={dialog} {...formHelp} onClose={() => setFormHelp(null)} />}
       </section>
     </div>
   );
@@ -2167,11 +2298,13 @@ function SourcePanel({
   caseId,
   onClose,
   onReviewed,
+  lessonContent,
 }: {
   source: { doc: Doc; evidence?: Evidence };
   caseId: string;
   onClose: () => void;
   onReviewed: () => Promise<void>;
+  lessonContent?: React.ReactNode;
 }) {
   const { doc, evidence: ev } = source;
   const [editing, setEditing] = useState(false),
@@ -2246,6 +2379,7 @@ function SourcePanel({
             Оригинал
           </a>
         </div>
+        {lessonContent}
         <div className="source-body">
           <div className="source-preview">
             {image ? (
