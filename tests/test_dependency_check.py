@@ -36,6 +36,8 @@ def test_supported_and_old_tool_versions(tmp_path, node, npm, ready):
     assert report['ready'] is ready
     assert code == (0 if ready else 1)
     assert checks['Git (необязателен)']['status'] == 'WARN'
+    assert checks['py (необязателен)']['status'] == 'WARN'
+    assert 'Python Launcher' in checks['py (необязателен)']['hint']
     assert checks['Python 3.12 x64']['status'] == 'OK'
     assert checks['Node.js']['status'] == ('OK' if ready else 'ERROR')
     assert checks['npm 9+']['status'] == ('OK' if ready else 'ERROR')
@@ -51,6 +53,31 @@ def test_no_python_or_node_reports_installation_steps(tmp_path):
     assert checks['pip / venv']['status'] == 'SKIP'
     assert 'Python.Python.3.12' in checks['Python 3.12 x64']['hint']
     assert 'OpenJS.NodeJS.LTS' in checks['npm 9+']['hint']
+
+
+@pytest.mark.parametrize(('output', 'exit_code', 'status'), [
+    ('Python 3.12.10', 0, 'OK'),
+    ('No suitable Python runtime found', 1, 'WARN'),
+    ('Python 3.11.9', 0, 'WARN'),
+])
+def test_py_launcher_reports_whether_readme_command_works(tmp_path, output, exit_code, status):
+    (tmp_path/'node.cmd').write_text('@echo off\necho v22.0.0\n', encoding='ascii')
+    (tmp_path/'npm.cmd').write_text('@echo off\necho 10.0.0\n', encoding='ascii')
+    (tmp_path/'py.cmd').write_text(
+        '@echo off\n'
+        'if not "%~1"=="-3.12" exit /b 2\n'
+        'if not "%~2"=="--version" exit /b 2\n'
+        'if not "%PYTHON_MANAGER_AUTOMATIC_INSTALL%"=="false" exit /b 2\n'
+        'echo '+output+'\nexit /b '+str(exit_code)+'\n',
+        encoding='ascii',
+    )
+    code, report, checks = run_check(tmp_path, sys.executable)
+    assert code == 0
+    assert report['ready'] is True
+    assert checks['py (необязателен)']['status'] == status
+    assert str(tmp_path/'py.cmd') in checks['py (необязателен)']['detail']
+    assert output in checks['py (необязателен)']['detail']
+    assert report['warnings'] == (1 if status == 'OK' else 2)
 
 
 def test_wrong_python_version_and_architecture_are_detected(tmp_path):

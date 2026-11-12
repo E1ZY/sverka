@@ -77,6 +77,23 @@ function Find-Tool {
     return $null
 }
 
+$pyPath = Find-Tool @('py.exe', 'py')
+$managerPath = Find-Tool @('pymanager.exe', 'pymanager')
+$pyHint = 'Для команды py включите Python Launcher в установщике Python 3.12 x64 или установите Python Install Manager, затем откройте новое окно PowerShell. Если Python 3.12 x64 уже найден, вместо py -3.12 используйте его полный путь (в PowerShell: & "C:\путь\к\python.exe"). README: раздел 1.3.'
+if (-not $pyPath) {
+    Add-Check 'py (необязателен)' 'WARN' 'Команда py не найдена в PATH; команды py -3.12 из README недоступны.' $pyHint
+} elseif ($pyPath -match '\\Microsoft\\WindowsApps\\' -and -not $managerPath) {
+    Add-Check 'py (необязателен)' 'WARN' "Найден Windows Store alias: $pyPath; установленный Python Install Manager не найден." $pyHint
+} else {
+    $py = Invoke-Probe $pyPath @('-3.12', '--version')
+    if ($py.exitCode -eq 0 -and $py.output -match '^Python 3\.12\.\d+\s*$') {
+        Add-Check 'py (необязателен)' 'OK' "$($py.output); $pyPath; команда py -3.12 работает."
+    } else {
+        $pyDetail = ($py.output + ' ' + $py.error).Trim()
+        Add-Check 'py (необязателен)' 'WARN' "Найден $pyPath, но py -3.12 --version не подтвердил Python 3.12: $pyDetail" ($pythonInstall + ' ' + $pyHint)
+    }
+}
+
 $candidates = [System.Collections.Generic.List[object]]::new()
 if ($PythonExe) {
     $candidates.Add([pscustomobject]@{ path = $PythonExe; prefix = @() })
@@ -96,7 +113,6 @@ if ($PythonExe) {
             }
         } catch { }
     }
-    $managerPath = Find-Tool @('pymanager.exe', 'pymanager')
     if ($managerPath) {
         # Unlike the generic Store alias, this is the installed Python manager.
         # Automatic installation is disabled in Invoke-Probe's child environment.
