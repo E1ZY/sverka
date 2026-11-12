@@ -457,6 +457,89 @@ button.stat:hover {
   border: 1px solid #dde6fc;
   border-radius: 16px;
 }
+
+.source-preview.source-preview-image {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-height: 0;
+}
+.document-image-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.document-preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  padding: 8px 14px;
+  background: #fff;
+  border-bottom: 1px solid #dfe6f0;
+}
+.document-preview-toolbar .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: 12px;
+}
+.document-preview-toolbar [aria-pressed="true"] {
+  color: #355bd0;
+  font-weight: 600;
+}
+.document-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.document-zoom-controls .icon-button {
+  padding: 6px;
+  color: #536b89;
+}
+.document-zoom-controls .icon-button:disabled {
+  opacity: 0.4;
+}
+.document-zoom-controls output {
+  min-width: 42px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #536b89;
+}
+.document-image-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 24px;
+}
+.document-image-viewport .page-image {
+  max-width: none;
+  margin: 0 auto;
+}
+@media (max-width: 760px) {
+  .source-preview.source-preview-image {
+    height: min(56vh, 480px);
+    min-height: 280px;
+    flex: 0 0 auto;
+  }
+  .document-preview-toolbar {
+    gap: 4px 10px;
+    padding: 6px 10px;
+  }
+  .document-preview-toolbar .text-button {
+    font-size: 11px;
+  }
+  .document-image-viewport {
+    padding: 16px;
+  }
+}
 .welcome .welcome-description {
   max-width: 650px;
   margin: 0 auto;

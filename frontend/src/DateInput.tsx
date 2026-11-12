@@ -1,8 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CalendarDays } from "lucide-react";
 
 function displayDate(value: string) {
   return value ? value.split("-").reverse().join(".") : "";
+}
+
+function dateDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+function maskDate(digits: string) {
+  return digits.slice(0, 2) + (digits.length >= 2 ? "." + digits.slice(2, 4) : "") +
+    (digits.length >= 4 ? "." + digits.slice(4) : "");
 }
 
 function isoDate(value: string) {
@@ -25,6 +34,13 @@ export function DateInput({ name, label, value, onChange, min, required = false 
   const emitted = useRef(value);
   const input = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLInputElement>(null);
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (pendingCaret.current !== null && input.current === document.activeElement) {
+      input.current?.setSelectionRange(pendingCaret.current, pendingCaret.current);
+    }
+    pendingCaret.current = null;
+  });
   useEffect(() => {
     // Preserve unfinished manual input when its ISO value is still empty.
     if (value !== emitted.current) {
@@ -42,10 +58,29 @@ export function DateInput({ name, label, value, onChange, min, required = false 
     emitted.current = nextValue;
     onChange(nextValue);
   };
+  const typeDate = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = event.currentTarget.value;
+    let digits = dateDigits(raw);
+    let beforeCaret = dateDigits(raw.slice(0, event.currentTarget.selectionStart ?? raw.length)).length;
+    const inputType = (event.nativeEvent as InputEvent).inputType;
+    // Backspace/Delete across a fixed dot should delete a digit, not get stuck.
+    if (raw !== text && digits === dateDigits(text) &&
+        (inputType === "deleteContentBackward" || inputType === "deleteContentForward")) {
+      const backward = inputType === "deleteContentBackward";
+      const index = beforeCaret - (backward ? 1 : 0);
+      if (index >= 0 && index < digits.length) {
+        digits = digits.slice(0, index) + digits.slice(index + 1);
+        if (backward) beforeCaret--;
+      }
+    }
+    const nextText = maskDate(digits.slice(0, 8));
+    pendingCaret.current = Math.min(nextText.length, beforeCaret + (beforeCaret >= 2 ? 1 : 0) + (beforeCaret >= 4 ? 1 : 0));
+    change(nextText, isoDate(nextText));
+  };
   return <span className="date-input">
     <input ref={input} type="text" aria-label={label} placeholder="ДД.ММ.ГГГГ"
-      required={required} maxLength={10} autoComplete="off" value={text}
-      onChange={(event) => change(event.target.value, isoDate(event.target.value))} />
+      required={required} inputMode="numeric" autoComplete="off" value={text}
+      onChange={typeDate} />
     <button type="button" className="date-picker-button" aria-label={`Выбрать дату: ${label}`}
       onClick={() => picker.current?.showPicker?.()}><CalendarDays size={17} /></button>
     <input ref={picker} className="date-picker-native" type="date" name={name}

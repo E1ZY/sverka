@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -311,11 +311,11 @@ def original(case_id: str, document_id: str):
 
 
 @app.get('/api/cases/{case_id}/documents/{document_id}/page/{page}')
-def image_page(case_id: str, document_id: str, page: int):
+def image_page(case_id: str, document_id: str, page: int, dpi: int = Query(default=180, ge=72, le=360)):
     with Session() as session:
         doc = get_document(session, case_id, document_id)
         try:
-            image = page_image(doc.path, page)
+            image = page_image(doc.path, page, dpi=dpi)
             out = io.BytesIO()
             image.save(out, format='PNG')
         except Exception as e:

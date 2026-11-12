@@ -63,13 +63,13 @@ export function FixtureBatchResults({
     <div className="fixture-batch-panel">
       <div className="fixture-batch-overview" role="status" aria-live="polite">
         <div className="fixture-batch-heading">
-          <h3>{running ? "Проверяем весь каталог" : "Прогон завершён"}</h3>
+          <h3>{running ? "Проверяем все примеры" : "Проверка всех примеров завершена"}</h3>
           <span>
             {batch.done} из {batch.total} · {batch.progress}%
           </span>
         </div>
         <progress
-          aria-label="Прогресс общего прогона"
+          aria-label="Прогресс проверки всех примеров"
           value={batch.done}
           max={batch.total}
         />
@@ -95,11 +95,11 @@ export function FixtureBatchResults({
         </div>
         <p>
           {running
-            ? "Прогон продолжится, если закрыть окно. Результаты сохраняются автоматически."
-            : "Откройте кейс, чтобы посмотреть расчёт, источники и отличия от эталона."}
+            ? "Проверка продолжится, если закрыть окно. Результаты сохраняются автоматически."
+            : "Откройте пример, чтобы посмотреть расчёт, источники и отличия от эталона."}
         </p>
       </div>
-      <div className="suite-filters filters" aria-label="Фильтр общего прогона">
+      <div className="suite-filters filters" aria-label="Фильтр результатов примеров">
         {[
           ["all", `Все (${batch.total})`],
           [
@@ -128,17 +128,17 @@ export function FixtureBatchResults({
       </div>
       <div
         className="fixture-batch-list"
-        aria-label="Результаты общего прогона"
+        aria-label="Результаты проверки примеров"
       >
         {!visible.length && (
           <div className="empty-small">
             <CheckCheck size={25} />
             <p>
               {running
-                ? "В этой группе пока нет результатов. Прогон продолжается."
+                ? "В этой группе пока нет результатов. Проверка продолжается."
                 : filter === "errors"
                   ? "Новых ошибок нет"
-                  : "В этой группе нет кейсов"}
+                  : "В этой группе нет примеров"}
             </p>
           </div>
         )}
@@ -172,7 +172,7 @@ export function FixtureBatchResults({
             {item.case_id ? (
               <button
                 className="icon-button"
-                aria-label={`Открыть кейс: ${item.title}`}
+                aria-label={`Открыть пример: ${item.title}`}
                 onClick={() => onOpen(item.case_id!)}
               >
                 <ChevronRight size={18} />

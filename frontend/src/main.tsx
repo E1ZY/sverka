@@ -33,6 +33,7 @@ import { FixtureBatchResults, type FixtureBatch } from "./FixtureBatchResults";
 import { useDialog } from "./useDialog";
 import { useReportContext } from "./useReportContext";
 import { DateInput } from "./DateInput";
+import { DocumentImagePreview } from "./DocumentImagePreview";
 import { ClearChecksDialog } from "./ClearChecksDialog";
 import { CheckTutorial, type TutorialStep } from "./CheckTutorial";
 import { ExampleQuestion, TaskExampleSuccess, type TaskExample } from "./TaskExampleTutorial";
@@ -404,6 +405,14 @@ function App() {
   const numericDelta = exampleMetric?.delta == null ? NaN : Number(exampleMetric.delta);
   const correctAnswer = !Number.isFinite(numericDelta) ? null : numericDelta > 0 ? "report" : numericDelta < 0 ? "primary" : "equal";
   const answerCorrect = !!correctAnswer && example?.answer === correctAnswer;
+  const sourceImageEvidence = !!source?.evidence?.bbox && /\.(pdf|png|jpe?g)$/i.test(source.doc.name);
+  const exampleSourceValue = source?.doc.role === "report" ? exampleMetric?.actual
+    : exampleMetric?.terms.find((term) => term.document_id === source?.doc.id)?.amount;
+  const exampleSourceReadout = source && exampleSourceValue != null ? <div className="tutorial-source-readout">
+    <span>{source.doc.role === "report" ? "Сумма в КФЗ" : "Сумма в этом документе"}</span>
+    <strong>{rub(exampleSourceValue)} ₽</strong>
+    <small>Этап {current?.context.stage} · {current?.context.period_start.slice(0, 4)} год · статья {exampleMetric?.code}</small>
+  </div> : undefined;
   const exampleSteps: TutorialStep[] = [
     { target: "example-status", title: "Дождитесь результата", text: "Документы обрабатываются. Следующий шаг откроется, когда будут готовы суммы и источники расчёта.",
       complete: exampleReady, waitingText: current?.status === "failed" ? "Обработка прервана. Нажмите «Повторить обработку» или выйдите из обучения." : "Дождитесь завершения сверки.", successText: "Расчёт готов — можно исследовать результат." },
@@ -411,9 +420,19 @@ function App() {
       complete: filter === "MISMATCH", waitingText: "Нажмите «Расхождения» в выделенном фильтре.", successText: "Фильтр выбран. Найдём проблемную статью." },
     { target: detail?.code === exampleMetric?.code && detail ? "example-calculation" : "example-article", title: "Откройте статью с расхождением", text: "Нажмите на выделенную статью затрат. В её расчёте видны исходная сумма КФЗ, сумма по документам и разница.",
       complete: !!example?.article && example.article === exampleMetric?.code, waitingText: "Откройте выделенную строку статьи.", successText: "Расчёт статьи открыт. Проверим источники сумм." },
-    { target: source?.doc.role === "report" ? "example-evidence" : "example-report", focusPadding: source?.doc.role === "report" ? 24 : undefined, title: "Проверьте сумму в КФЗ", text: "Нажмите «Посмотреть значение в КФЗ». Откроется скан с фрагментом, из которого прочитана сумма отчёта.",
-      complete: !!example?.reportOpened, waitingText: "Откройте исходный отчёт по выделенной кнопке.", successText: "КФЗ открыт. Теперь проверим подтверждающий документ." },
-    { target: source?.doc.role === "primary" ? "example-evidence" : "example-primary", focusPadding: source?.doc.role === "primary" ? 24 : undefined, title: "Откройте первичный документ", text: "Откройте выделенное слагаемое расчёта. Это одна операция: полная сумма по первичке складывается из всех учтённых документов статьи.",
+    { target: source?.doc.role === "report" ? sourceImageEvidence ? "example-evidence-view" : "example-evidence" : "example-report",
+      anchor: source?.doc.role === "report" && sourceImageEvidence ? "example-evidence" : undefined,
+      focusPadding: sourceImageEvidence ? 0 : undefined, title: "Проверьте сумму в КФЗ",
+      text: source?.doc.role === "report" ? "Сравните выделенную сумму с указанной ниже. Над сканом можно изменить масштаб или открыть всю страницу."
+        : "Нажмите «Посмотреть значение в КФЗ». Откроется скан с фрагментом, из которого прочитана сумма отчёта.",
+      content: source?.doc.role === "report" ? exampleSourceReadout : undefined,
+      complete: !!example?.reportOpened, waitingText: "Откройте исходный отчёт по выделенной кнопке.", successText: "Сумма открыта. Далее — первичный документ." },
+    { target: source?.doc.role === "primary" ? sourceImageEvidence ? "example-evidence-view" : "example-evidence" : "example-primary",
+      anchor: source?.doc.role === "primary" && sourceImageEvidence ? "example-evidence" : undefined,
+      focusPadding: sourceImageEvidence ? 0 : undefined, title: "Откройте первичный документ",
+      text: source?.doc.role === "primary" ? "Сравните выделенную сумму с указанной ниже. Это одно слагаемое полной суммы расходов по статье."
+        : "Откройте выделенное слагаемое расчёта. Это одна операция: полная сумма по первичке складывается из всех учтённых документов статьи.",
+      content: source?.doc.role === "primary" ? exampleSourceReadout : undefined,
       complete: !!example?.primaryDocument, waitingText: "Нажмите на выделенный документ в расчёте.", successText: "Подтверждающий документ открыт. Осталось сравнить суммы." },
     { target: "example-calculation", title: "Что означает расхождение?", text: "Сравните сумму отчёта с суммой по документам. Выберите верное объяснение — после этого можно завершить обучение.",
       complete: answerCorrect, waitingText: example?.answer ? "Пока неверно. Разница — сумма в отчёте минус сумма по документам. Сравните значения ещё раз." : "Выберите ответ ниже.",
@@ -537,7 +556,7 @@ function App() {
         </button>
         <button className="nav" onClick={() => setFixturesOpen(true)}>
           <Layers3 size={18} />
-          Тестовые кейсы
+          Примеры проверок
         </button>
         <div className="sidebar-section">
           <span>ПОСЛЕДНИЕ ПРОВЕРКИ</span>
@@ -632,7 +651,7 @@ function App() {
               </p>
             </div>
             <div className="heading-actions">
-              {!showWelcome && <><button className="button example-trigger" onClick={openExample} title="Учебный пример из исходного задания">
+              {!showWelcome && <><button className="button example-trigger" onClick={openExample} title="Учебный пример с готовыми документами">
                 <GraduationCap size={17} />Учебный пример
               </button>
               <button className="button" aria-label="Как сделать проверку"
@@ -645,7 +664,7 @@ function App() {
                 onClick={() => setFixturesOpen(true)}
               >
                 <Layers3 size={17} />
-                Тестовые кейсы
+                Примеры проверок
               </button>
               <button
                 className="button primary"
@@ -667,7 +686,7 @@ function App() {
             </div>
           )}
           {example?.caseId && selected === example.caseId && <section className="example-status" data-tutorial="example-status" aria-label="Учебная проверка">
-            <strong>Учебный комплект исходного задания</strong>
+            <strong>Учебный комплект</strong>
             <span role="status">{exampleReady ? "Проверка завершена. Суммы и источники готовы."
               : current?.status === "failed" ? "Не удалось завершить обработку."
               : current?.status === "completed" ? "В результате не найдены все данные для учебного примера."
@@ -1441,6 +1460,7 @@ function App() {
         <SourcePanel
           source={source}
           caseId={selected}
+          focusEvidence={!!example && (example.step === 3 || example.step === 4)}
           onClose={() => setSource(null)}
           onReviewed={async () => {
             setSource(null);
@@ -1650,7 +1670,7 @@ function FixtureCatalog({
       });
       if (result.status === "queued" && result.case_id) onDone(result.case_id);
       else if (result.status === "rejected") setRejected(result);
-      else throw new Error("Не удалось запустить кейс");
+      else throw new Error("Не удалось запустить пример");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1691,26 +1711,26 @@ function FixtureCatalog({
         ref={dialog}
         role="dialog"
         aria-modal="true"
-        aria-label="Тестовые кейсы"
+        aria-label="Примеры проверок"
       >
         <header className="fixture-modal-heading">
           <div>
-            <span className="eyebrow">ГОТОВЫЕ КОМПЛЕКТЫ ДОКУМЕНТОВ</span>
-            <h2>Тестовые кейсы</h2>
+            <span className="eyebrow">ПРИМЕРЫ ПРОВЕРОК</span>
+            <h2>Готовые комплекты для проверки</h2>
             <p>
-              Выберите сценарий. Параметры и документы загрузятся автоматически.
+              Выберите пример, запустите проверку и сравните результат с ожидаемым.
             </p>
           </div>
           <button
             className="icon-button"
-            aria-label="Закрыть каталог кейсов"
+            aria-label="Закрыть примеры проверок"
             disabled={busy}
             onClick={onClose}
           >
             <X />
           </button>
         </header>
-        <div className="fixture-tabs" aria-label="Режим каталога кейсов">
+        <div className="fixture-tabs" aria-label="Раздел примеров проверок">
           <button
             className={view === "catalog" ? "active" : ""}
             disabled={busy}
@@ -1723,7 +1743,7 @@ function FixtureCatalog({
             disabled={busy || !batch}
             onClick={() => setView("batch")}
           >
-            Общий прогон{batch ? ` · ${batch.done}/${batch.total}` : ""}
+            Все примеры{batch ? ` · ${batch.done}/${batch.total}` : ""}
           </button>
         </div>
         {view === "catalog" && (
@@ -1732,7 +1752,7 @@ function FixtureCatalog({
               <Search size={16} />
               <input
                 autoFocus
-                placeholder="Найти кейс по названию или номеру"
+                placeholder="Найти пример по названию или номеру"
                 value={query}
                 disabled={busy}
                 onChange={(e) => {
@@ -1771,7 +1791,7 @@ function FixtureCatalog({
           <FixtureBatchResults batch={batch} onOpen={onDone} />
         ) : (
           <div className="fixture-layout">
-            <div className="fixture-list" aria-label="Список тестовых кейсов">
+            <div className="fixture-list" aria-label="Список примеров">
               {loading ? (
                 <div className="empty-small">
                   <Loader2 size={22} className="spin" />
@@ -1806,8 +1826,8 @@ function FixtureCatalog({
               ) : (
                 <div className="empty-small">
                   {items.length
-                    ? "Кейсы не найдены. Измените запрос или фильтр."
-                    : "Тестовые комплекты не установлены. Можно загрузить свои документы через «Новая проверка»."}
+                    ? "Примеры не найдены. Измените запрос или фильтр."
+                    : "Готовые комплекты не установлены. Можно загрузить свои документы через «Новая проверка»."}
                 </div>
               )}
             </div>
@@ -1826,7 +1846,7 @@ function FixtureCatalog({
                     onClick={() => setShowContext(!showContext)}
                   >
                     <span>
-                      <small>ПАРАМЕТРЫ СЦЕНАРИЯ</small>
+                      <small>ПАРАМЕТРЫ ПРИМЕРА</small>
                       {active.title}
                     </span>
                     <ChevronRight size={18} />
@@ -1835,7 +1855,7 @@ function FixtureCatalog({
                     <span className="eyebrow">
                       {active.origin === "task"
                         ? "ИЗ ЗАДАНИЯ"
-                        : `КЕЙС ${active.id.slice(0, 2)}`}
+                        : `ПРИМЕР ${active.id.slice(0, 2)}`}
                     </span>
                     <h3>{active.title}</h3>
                     <p>{active.description}</p>
@@ -1874,8 +1894,7 @@ function FixtureCatalog({
                       </p>
                     )}
                     <p className="fixture-oracle-note">
-                      После сверки появится отдельное сравнение с эталоном
-                      кейса.
+                      После сверки появится сравнение с ожидаемым результатом.
                     </p>
                   </div>
                 </>
@@ -1913,14 +1932,14 @@ function FixtureCatalog({
         <footer className="fixture-modal-footer">
           <span>
             {view === "batch" && batch
-              ? `Проверено ${batch.done} из ${batch.total} кейсов`
-              : `${visible.length} из ${items.length} кейсов · локальная обработка`}
+              ? `Проверено ${batch.done} из ${batch.total} примеров`
+              : `${visible.length} из ${items.length} примеров · локальная обработка`}
           </span>
           <div className="fixture-footer-actions">
             <button
               className={"button " + (view === "batch" ? "primary" : "")}
               disabled={loading || busy || !items.length || batchRunning}
-              title="Проверить весь каталог, включая кейсы, скрытые поиском и фильтрами"
+              title="Проверить все примеры, включая скрытые поиском и фильтрами"
               onClick={launchAll}
             >
               {busy ? (
@@ -1929,10 +1948,10 @@ function FixtureCatalog({
                 <CheckCheck size={17} />
               )}
               {batchRunning
-                ? "Прогон выполняется…"
+                ? "Проверяем все примеры…"
                 : view === "batch"
-                  ? "Прогнать все заново"
-                  : `Прогнать все (${items.length})`}
+                  ? "Проверить все примеры снова"
+                  : `Проверить все примеры (${items.length})`}
             </button>
             {view === "catalog" && (
               <button
@@ -1989,12 +2008,12 @@ function NewCaseModal({
   const primaryReady = primaryFiles.length === 22 && primaryFiles.every((file) => validFile(file, false));
   const preparationReady = reportReady && scopeReady && primaryReady && completePackage;
   const trainingSteps: TutorialStep[] = [
-    { target: "report", title: "Выберите учебный КФЗ", text: "Скачайте и распакуйте комплект или откройте task/data. Нажмите на выделенную область и выберите файл «01_Карточка_учета_фактических_затрат_этап_3.pdf» из папки report.",
-      content: <a className="button tutorial-kit-link" href="/api/demo/documents.zip"><ArrowDownToLine size={16} />Скачать учебный комплект</a>,
+    { target: "report", title: "Выберите учебный КФЗ", text: "Скачайте и распакуйте учебный архив. Затем нажмите на выделенную область и выберите PDF из папки report.",
+      content: <a className="button tutorial-kit-link" href="/api/demo/documents.zip"><ArrowDownToLine size={16} />Скачать учебный архив</a>,
       complete: reportReady, waitingText: "Выберите один непустой PDF, PNG или JPEG до 25 МБ.", successText: "Отчёт выбран. Проверим, какую строку будем сверять." },
-    { target: "scope", title: "Укажите строку учебного отчёта", text: "Проверьте договор 24/03/15-01 и этап 3. Для строки «3 этап, 2026 г.» задайте период 01.01.2026–31.05.2026. Общий период в шапке КФЗ шире, поэтому здесь нужны именно эти даты.",
-      complete: scopeReady, waitingText: "Укажите договор, этап и обе даты из задания.", successText: "Параметры учебной строки указаны верно." },
-    { target: "primary", title: "Выберите первичные документы", text: "В выделенной области выберите все 22 файла из папки primary скачанного комплекта. В task/data это документы с префиксами 02–15. README и таблица с ответами не нужны.",
+    { target: "scope", title: "Укажите этап и период", text: "Номер договора 24/03/15-01 распознан автоматически. Этап и период распознать не удалось — укажите их вручную.",
+      complete: scopeReady, waitingText: "Укажите этап 3 и период с 01.01.2026 по 31.05.2026.", successText: "Все параметры указаны верно." },
+    { target: "primary", title: "Выберите первичные документы", text: "Нажмите на выделенную область и выберите все 22 файла из папки primary распакованного учебного архива.",
       complete: primaryReady, waitingText: `Выбрано ${primaryFiles.length} из 22 документов. Нужны непустые файлы поддерживаемых форматов до 25 МБ каждый.`, successText: "Все 22 первичных документа выбраны." },
     { target: "complete", title: "Подтвердите полноту комплекта", text: "В учебном комплекте представлены все первичные документы за выбранный период. Отметьте это, чтобы сверка могла сделать вывод о полной сумме расходов.",
       complete: completePackage, waitingText: "Поставьте галочку «Все первичные документы за период загружены».", successText: "Комплект отмечен как полный." },
@@ -2122,7 +2141,7 @@ function NewCaseModal({
         <header className="new-case-heading">
           <span className="eyebrow">{training ? "ПРАКТИКА С ПОДСКАЗКАМИ" : "СВЕРКА ПО ВАШИМ ДОКУМЕНТАМ"}</span>
           <h2>{training ? "Проверим учебный комплект" : "Новая проверка"}</h2>
-          <p>{training ? "Выберите КФЗ и 22 первичных документа из исходного задания. Каждый шаг откроется после выполнения предыдущего." : "Добавьте документы и укажите, какую строку отчёта проверить."}</p>
+          <p>{training ? "Выберите КФЗ и 22 первичных документа из учебного архива. Каждый шаг откроется после выполнения предыдущего." : "Добавьте документы и укажите, какую строку отчёта проверить."}</p>
           {!training && <button type="button" className="tutorial-start" data-tutorial-start
             disabled={busy} onClick={() => setTutorialOpen(true)}>
             <CircleHelp size={16} />Показать подсказки
@@ -2374,11 +2393,13 @@ function NewCaseModal({
 function SourcePanel({
   source,
   caseId,
+  focusEvidence,
   onClose,
   onReviewed,
 }: {
   source: { doc: Doc; evidence?: Evidence };
   caseId: string;
+  focusEvidence: boolean;
   onClose: () => void;
   onReviewed: () => Promise<void>;
 }) {
@@ -2462,32 +2483,18 @@ function SourcePanel({
           </a>
         </div>
         <div className="source-body">
-          <div className="source-preview">
+          <div className={"source-preview " + (image && !imageError ? "source-preview-image" : "")}>
             {image ? (
               imageError ? (
                 <p className="notice">
                   Предпросмотр недоступен. Скачайте оригинал.
                 </p>
               ) : (
-                <div className="page-image">
-                  <img
-                    alt="Страница первичного документа"
-                    onError={() => setImageError(true)}
-                    src={`/api/cases/${caseId}/documents/${doc.id}/page/${ev?.page || 1}`}
-                  />
-                  {ev?.bbox && (
-                    <span
-                      className="evidence-highlight"
-                      data-tutorial="example-evidence"
-                      style={{
-                        left: ev.bbox[0] * 100 + "%",
-                        top: ev.bbox[1] * 100 + "%",
-                        width: (ev.bbox[2] - ev.bbox[0]) * 100 + "%",
-                        height: (ev.bbox[3] - ev.bbox[1]) * 100 + "%",
-                      }}
-                    />
-                  )}
-                </div>
+                <DocumentImagePreview key={`${doc.id}:${ev?.page || 1}`} bbox={ev?.bbox}
+                  evidenceText={ev?.text} amount={doc.extraction?.amount}
+                  focusInitially={focusEvidence} onError={() => setImageError(true)}
+                  alt={doc.role === "report" ? "Страница отчёта КФЗ" : "Страница первичного документа"}
+                  src={`/api/cases/${caseId}/documents/${doc.id}/page/${ev?.page || 1}?dpi=300`} />
               )
             ) : (
               <div className="structured-document">
