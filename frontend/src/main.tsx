@@ -651,14 +651,9 @@ function App() {
               </p>
             </div>
             <div className="heading-actions">
-              {!showWelcome && <><button className="button example-trigger" onClick={openExample} title="Учебный пример с готовыми документами">
+              {!showWelcome && <button className="button example-trigger" onClick={openExample} title="Учебный пример с готовыми документами">
                 <GraduationCap size={17} />Учебный пример
-              </button>
-              <button className="button" aria-label="Как сделать проверку"
-                title="Как сделать проверку" onClick={() => openNew(true)}>
-                <CircleHelp size={17} />
-                Как сделать проверку
-              </button></>}
+              </button>}
               <button
                 className="button fixtures-mobile-trigger"
                 onClick={() => setFixturesOpen(true)}
