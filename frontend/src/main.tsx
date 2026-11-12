@@ -23,6 +23,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -31,6 +32,8 @@ import "./ux.css";
 import { FixtureBatchResults, type FixtureBatch } from "./FixtureBatchResults";
 import { useDialog } from "./useDialog";
 import { useReportContext } from "./useReportContext";
+import { DateInput } from "./DateInput";
+import { ClearChecksDialog } from "./ClearChecksDialog";
 import { CheckTutorial, type TutorialStep } from "./CheckTutorial";
 import { ExampleQuestion, TaskExampleSuccess, type TaskExample } from "./TaskExampleTutorial";
 
@@ -246,6 +249,7 @@ function App() {
     [caseQuery, setCaseQuery] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
+    [clearChecks, setClearChecks] = useState<{ ids: string[]; activeCount: number } | null>(null),
     [newOpen, setNewOpen] = useState(false),
     [newTutorial, setNewTutorial] = useState(false),
     [example, setExample] = useState<TaskExample | null>(null),
@@ -256,6 +260,7 @@ function App() {
       null,
     );
   const shell = useRef<HTMLDivElement>(null);
+  const removedCaseIds = useRef(new Set<string>());
   const selection = useRef(selected);
   selection.current = selected;
   const detailDialog = useDialog(() => setDetail(null), false, !!detail);
@@ -278,7 +283,7 @@ function App() {
     setSource(null);
   };
   const refresh = async () => {
-    setCases(await api<Case[]>("/cases"));
+    setCases((await api<Case[]>("/cases")).filter((item) => !removedCaseIds.current.has(item.id)));
     if (selected && selection.current === selected) {
       const c = await api<Case>("/cases/" + selected);
       if (selection.current === selected) setCurrent(c);
@@ -292,14 +297,15 @@ function App() {
     });
   }, [selected]);
   const running = current?.status === "running" || current?.status === "queued";
+  const pendingCases = cases.some((item) => ["queued", "running"].includes(item.status));
   useEffect(() => {
-    if (!running) return;
+    if (!running && !pendingCases) return;
     const id = setInterval(
       () => refresh().catch((e) => setError(e.message)),
       1000,
     );
     return () => clearInterval(id);
-  }, [running, selected]);
+  }, [running, pendingCases, selected]);
   const choose = (id: string) => {
     if (!cases.some((item) => item.id === id)) setCaseQuery("");
     if (selection.current !== id) setCurrent(null);
@@ -323,6 +329,31 @@ function App() {
     setDetail(null);
     setSource(null);
     setError("");
+  };
+  const clearableCases = cases.filter((item) => !["queued", "running"].includes(item.status));
+  const openClearChecks = () => {
+    if (!clearableCases.length) return;
+    setClearChecks({ ids: clearableCases.map((item) => item.id), activeCount: cases.length - clearableCases.length });
+  };
+  const confirmClearChecks = async () => {
+    if (!clearChecks) return;
+    const ids = new Set(clearChecks.ids);
+    const result = await api<{ deleted_ids: string[]; cleanup_failed: string[] }>("/cases", {
+      method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ case_ids: [...ids] }),
+    });
+    ids.forEach((id) => removedCaseIds.current.add(id));
+    setCases((items) => items.filter((item) => !ids.has(item.id)));
+    setCaseQuery("");
+    if (selection.current && ids.has(selection.current)) overview();
+    if (example?.caseId && ids.has(example.caseId)) cancelExample();
+    setExampleSuccess(null);
+    setClearChecks(null);
+    try {
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    if (result.cleanup_failed.length) setError("Проверки удалены из списка, но не удалось удалить некоторые загруженные копии файлов. Проверьте права доступа к папке данных.");
   };
   const action = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -505,9 +536,15 @@ function App() {
         </button>
         <div className="sidebar-section">
           <span>ПОСЛЕДНИЕ ПРОВЕРКИ</span>
-          <button aria-label="Новая проверка" onClick={() => openNew()}>
-            <Plus size={16} />
-          </button>
+          <div className="sidebar-section-actions">
+            <button aria-label="Очистить последние проверки" title={clearableCases.length ? "Очистить последние проверки" : "Нет проверок для очистки"}
+              disabled={!clearableCases.length || busy} onClick={openClearChecks}>
+              <Trash2 size={15} />
+            </button>
+            <button aria-label="Новая проверка" onClick={() => openNew()}>
+              <Plus size={16} />
+            </button>
+          </div>
         </div>
         <label className="case-search">
           <Search size={15} />
@@ -684,15 +721,19 @@ function App() {
                       Ваши проверки{" "}
                       <span className="subtle">{cases.length}</span>
                     </h2>
-                    <label className="search">
-                      <Search size={16} />
-                      <input
-                        aria-label="Поиск по проверкам"
-                        placeholder="Название или договор"
-                        value={caseQuery}
-                        onChange={(e) => setCaseQuery(e.target.value)}
-                      />
-                    </label>
+                    <div className="overview-case-tools">
+                      <label className="search">
+                        <Search size={16} />
+                        <input
+                          aria-label="Поиск по проверкам"
+                          placeholder="Название или договор"
+                          value={caseQuery}
+                          onChange={(e) => setCaseQuery(e.target.value)}
+                        />
+                      </label>
+                      <button className="button clear-checks-trigger" disabled={!clearableCases.length || busy} onClick={openClearChecks}
+                        aria-label="Очистить последние проверки"><Trash2 size={16} />Очистить</button>
+                    </div>
                   </div>
                   {filteredCases.map((c) => (
                     <button
@@ -1400,6 +1441,8 @@ function App() {
       }} />}
       {example && example.step >= 0 && <CheckTutorial root={shell} steps={exampleSteps} step={example.step} stepOffset={5} totalSteps={11} label="Учебный пример" exitLabel="Выйти"
         onStepChange={changeExampleStep} onClose={cancelExample} onFinish={finishExample} />}
+      {clearChecks && <ClearChecksDialog count={clearChecks.ids.length} activeCount={clearChecks.activeCount}
+        onClose={() => setClearChecks(null)} onConfirm={confirmClearChecks} />}
       {exampleSuccess && <TaskExampleSuccess {...exampleSuccess} onClose={() => setExampleSuccess(null)}
         onNew={() => { setExampleSuccess(null); openNew(); }} />}
     </div>
@@ -2244,24 +2287,24 @@ function NewCaseModal({
                 </label>
                 <label>
                   Начало периода
-                  <input
+                  <DateInput
                     name="start"
-                    type="date"
+                    label="Начало периода"
                     required
                     value={reportContext.values.period_start}
-                    onChange={(e) => reportContext.change("period_start", e.target.value)}
+                    onChange={(value) => reportContext.change("period_start", value)}
                   />
                   <small className="context-field-hint">{reportContext.hint("period_start")}</small>
                 </label>
                 <label>
                   Конец периода
-                  <input
+                  <DateInput
                     name="end"
-                    type="date"
+                    label="Конец периода"
                     required
                     min={reportContext.values.period_start || undefined}
                     value={reportContext.values.period_end}
-                    onChange={(e) => reportContext.change("period_end", e.target.value)}
+                    onChange={(value) => reportContext.change("period_end", value)}
                   />
                   <small className="context-field-hint">{reportContext.hint("period_end")}</small>
                 </label>

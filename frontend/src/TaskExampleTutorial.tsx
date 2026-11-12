@@ -36,11 +36,13 @@ export function TaskExampleSuccess({ article, difference, onClose, onNew }: {
   const [celebration, setCelebration] = useState(0);
   return <div className="overlay example-success-overlay">
     <div key={celebration} className="example-confetti" aria-hidden="true">{Array.from({ length: 72 }, (_, i) => <i key={i} style={{
-      left: ((i * 37 + 11) % 100) + "%",
+      left: i % 2 === 0 ? 0 : undefined,
+      right: i % 2 === 1 ? 0 : undefined,
       backgroundColor: ["#4166df", "#eeb14f", "#e4789c", "#4eae90", "#9b7be2"][i % 5],
-      "--delay": (i % 12) * 0.07 + "s",
-      "--duration": (2.8 + (i % 7) * 0.16) + "s",
-      "--drift": ((i * 23) % 180 - 90) + "px",
+      "--delay": (Math.floor(i / 2) % 10) * 0.025 + "s",
+      "--duration": (2.8 + (Math.floor(i / 2) % 7) * 0.16) + "s",
+      "--travel": (i % 2 === 0 ? 1 : -1) * (34 + (Math.floor(i / 2) * 17) % 56) + "vw",
+      "--rise": -(52 + (Math.floor(i / 2) * 13) % 38) + "vh",
       "--turn": (i % 2 ? "720deg" : "-720deg"),
     } as CSSProperties} />)}</div>
     <section className="modal example-success" role="dialog" aria-modal="true" aria-label="Учебный пример пройден" ref={dialog}>

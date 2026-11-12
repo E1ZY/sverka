@@ -25,7 +25,7 @@ export function useDialog(
         root.querySelectorAll<HTMLElement>(
           'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]',
         ),
-      ).filter((element) => element.getClientRects().length > 0);
+      ).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0 && !element.closest('[aria-hidden="true"]'));
     if (!root.contains(document.activeElement)) focusable()[0]?.focus();
     const keydown = (event: KeyboardEvent) => {
       const dialogs = document.querySelectorAll(

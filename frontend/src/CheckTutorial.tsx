@@ -92,7 +92,7 @@ export function CheckTutorial({ root, onClose, steps = overviewSteps, step: cont
         ...Array.from(card.current?.querySelectorAll<HTMLElement>(focusable) || []),
         ...(target?.matches(focusable) ? [target] : []),
         ...Array.from(target?.querySelectorAll<HTMLElement>(focusable) || []),
-      ].filter((element) => element.getClientRects().length > 0);
+      ].filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0 && !element.closest('[aria-hidden="true"]'));
       if (!controls.length) return;
       const index = controls.indexOf(document.activeElement as HTMLElement);
       const next = index < 0 ? (event.shiftKey ? controls.length - 1 : 0)

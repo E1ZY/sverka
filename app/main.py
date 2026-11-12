@@ -12,13 +12,14 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from .config import DATA, DEMO_DIR, MAX_CASE_FILES, MAX_FILE_BYTES, ROOT
@@ -69,6 +70,10 @@ class Context(BaseModel):
 
 class NewCase(Context):
     title: str = Field(default='Новая проверка', min_length=1, max_length=200)
+
+
+class ClearCases(BaseModel):
+    case_ids: list[UUID] = Field(min_length=1, max_length=100)
 
 
 class Correction(BaseModel):
@@ -127,6 +132,44 @@ def create_case(body: NewCase):
         session.add(case)
         session.flush()
         return case_dict(case)
+
+
+@app.delete('/api/cases')
+def clear_cases(body: ClearCases):
+    requested = {str(case_id) for case_id in body.case_ids}
+    with Session.begin() as session:
+        # Serialize removal with SQLite uploads and worker status changes.
+        if session.get_bind().dialect.name == 'sqlite':
+            session.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        cases = session.scalars(select(Case).where(Case.id.in_(requested)).with_for_update()).all()
+        ids = [case.id for case in cases]
+        active_run = session.scalar(select(Run.id).where(Run.case_id.in_(ids), Run.status.in_(['queued', 'running'])).limit(1))
+        if active_run or any(case.status in {'queued', 'running'} for case in cases):
+            raise HTTPException(409, 'Некоторые проверки уже выполняются. Обновите список и повторите очистку после их завершения.')
+        for batch in session.scalars(select(FixtureBatch).where(FixtureBatch.active_key.is_not(None))):
+            if any(item.get('case_id') in requested for item in batch.items):
+                batch_dict(session, batch)
+                if batch.active_key:
+                    raise HTTPException(409, 'Дождитесь завершения проверки всего каталога тестовых кейсов.')
+        directories = []
+        for case_id in ids:
+            directory = DATA / case_id
+            if directory.is_symlink() or directory.resolve().parent != DATA.resolve():
+                raise HTTPException(409, 'Не удалось безопасно определить папку документов проверки.')
+            directories.append((case_id, directory))
+        # Keep foreign-key constraints enabled; remove dependants before parents.
+        for model in (Review, Run, Document):
+            session.execute(delete(model).where(model.case_id.in_(ids)))
+        session.execute(delete(Case).where(Case.id.in_(ids)))
+    cleanup_failed = []
+    for case_id, directory in directories:
+        try:
+            if directory.exists():
+                shutil.rmtree(directory)
+        except OSError:
+            logging.getLogger(__name__).exception('Could not remove files for deleted case %s', case_id)
+            cleanup_failed.append(case_id)
+    return {'deleted_ids': ids, 'cleanup_failed': cleanup_failed}
 
 
 @app.post('/api/reports/context')

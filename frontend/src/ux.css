@@ -36,6 +36,66 @@
 .sidebar-section {
   margin: 25px 10px 12px;
 }
+.sidebar-section-actions {
+  display: flex;
+  gap: 10px;
+}
+.sidebar-section-actions button:hover {
+  color: #fff;
+}
+.sidebar-section-actions button:disabled {
+  cursor: default;
+}
+.overview-case-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+.overview-case-tools .search {
+  flex: 1;
+  min-width: 160px;
+}
+.clear-checks-trigger {
+  color: #a73c3c;
+}
+.clear-checks-overlay {
+  z-index: 120;
+}
+.clear-checks-dialog {
+  max-width: 500px;
+}
+.clear-checks-icon {
+  display: inline-flex;
+  color: #b33b3b;
+  background: #fceeed;
+  padding: 13px;
+  border-radius: 50%;
+  margin-bottom: 16px;
+}
+.clear-checks-dialog h2 {
+  margin-right: 15px;
+}
+.clear-checks-dialog p {
+  font-size: 13px;
+  color: #536277;
+}
+.clear-checks-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+.button.danger {
+  background: #b83f3f;
+  border-color: #b83f3f;
+  color: #fff;
+}
+.button.danger:hover {
+  background: #a63333;
+}
 .case-search {
   display: flex;
   align-items: center;
@@ -534,6 +594,41 @@ button.stat:hover {
 }
 .new-case-modal .form-grid > label {
   font-size: 12px;
+}
+.date-input {
+  display: block;
+  position: relative;
+}
+.modal .date-input input[type="text"] {
+  padding-right: 42px;
+}
+.date-picker-button {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  width: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 0 4px 4px 0;
+  color: #526d9c;
+}
+.date-picker-button:hover {
+  background: #edf2ff;
+}
+.date-picker-button:focus-visible {
+  outline: 2px solid #4166df;
+  outline-offset: -2px;
+}
+.modal .date-input input.date-picker-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(50%);
 }
 .new-case-modal .checkbox {
   font-size: 13px;
