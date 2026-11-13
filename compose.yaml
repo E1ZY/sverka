@@ -23,7 +23,7 @@ services:
       AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:-}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
     volumes:
       - documents:/data
     depends_on:
