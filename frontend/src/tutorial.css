@@ -119,6 +119,19 @@
   font-size: 12px;
   margin-bottom: 12px;
 }
+.tutorial-fill-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  white-space: normal;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.tutorial-fill-button svg {
+  flex-shrink: 0;
+}
 .tutorial-source-readout {
   display: grid;
   gap: 6px;

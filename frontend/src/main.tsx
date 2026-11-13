@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Sparkles,
   SlidersHorizontal,
   Trash2,
   Upload,
@@ -1969,6 +1970,13 @@ function FixtureCatalog({
   );
 }
 
+const trainingScope = {
+  contract: "24/03/15-01",
+  stage: "3",
+  period_start: "2026-01-01",
+  period_end: "2026-05-31",
+};
+
 function NewCaseModal({
   onClose,
   onDone,
@@ -1997,17 +2005,32 @@ function NewCaseModal({
   const validFile = (file: File, report: boolean) => !!file.size && file.size <= 25 * 1024 * 1024 &&
     (report ? /\.(pdf|png|jpe?g)$/i : /\.(pdf|docx|xlsx|png|jpe?g)$/i).test(file.name);
   const reportReady = reportFiles.length === 1 && validFile(reportFiles[0], true);
-  const scopeReady = reportContext.values.contract.trim() === "24/03/15-01" &&
-    Number(reportContext.values.stage) === 3 && reportContext.values.period_start === "2026-01-01" &&
-    reportContext.values.period_end === "2026-05-31";
+  const scopeReady = reportContext.values.contract.trim() === trainingScope.contract &&
+    Number(reportContext.values.stage) === Number(trainingScope.stage) &&
+    reportContext.values.period_start === trainingScope.period_start &&
+    reportContext.values.period_end === trainingScope.period_end;
   const primaryReady = primaryFiles.length === 22 && primaryFiles.every((file) => validFile(file, false));
   const preparationReady = reportReady && scopeReady && primaryReady && completePackage;
+  const fillTrainingScope = () => {
+    if (!training || busy) return;
+    reportContext.change("contract", trainingScope.contract);
+    reportContext.change("stage", trainingScope.stage);
+    reportContext.change("period_start", trainingScope.period_start);
+    reportContext.change("period_end", trainingScope.period_end);
+  };
   const trainingSteps: TutorialStep[] = [
     { target: "report", title: "Выберите учебный КФЗ", text: "Скачайте и распакуйте учебный архив. Затем нажмите на выделенную область и выберите PDF из папки report.",
       content: <a className="button tutorial-kit-link" href="/api/demo/documents.zip"><ArrowDownToLine size={16} />Скачать учебный архив</a>,
       complete: reportReady, waitingText: "Выберите один непустой PDF, PNG или JPEG до 25 МБ.", successText: "Отчёт выбран. Проверим, какую строку будем сверять." },
-    { target: "scope", title: "Укажите этап и период", text: "Номер договора 24/03/15-01 распознан автоматически. Этап и период распознать не удалось — укажите их вручную.",
-      complete: scopeReady, waitingText: "Укажите этап 3 и период с 01.01.2026 по 31.05.2026.", successText: "Все параметры указаны верно." },
+    { target: "scope", anchor: "scope", title: "Проверьте параметры примера", text: "Заполним договор, этап и период учебной проверки. Значения можно изменить.",
+      content: <>
+        <button type="button" className="button tutorial-fill-button" disabled={busy}
+          aria-describedby="tutorial-description" onClick={fillTrainingScope}>
+          <Sparkles size={16} />Подставить данные примера
+        </button>
+      </>,
+      complete: scopeReady, waitingText: "Укажите договор 24/03/15-01, этап 3 и период с 01.01.2026 по 31.05.2026.",
+      successText: "Параметры заполнены. Проверьте значения и нажмите «Далее»." },
     { target: "primary", title: "Выберите первичные документы", text: "Нажмите на выделенную область и выберите все 22 файла из папки primary распакованного учебного архива.",
       complete: primaryReady, waitingText: `Выбрано ${primaryFiles.length} из 22 документов. Нужны непустые файлы поддерживаемых форматов до 25 МБ каждый.`, successText: "Все 22 первичных документа выбраны." },
     { target: "complete", title: "Подтвердите полноту комплекта", text: "В учебном комплекте представлены все первичные документы за выбранный период. Отметьте это, чтобы сверка могла сделать вывод о полной сумме расходов.",
