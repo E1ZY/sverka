@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { CircleAlert, Loader2, Trash2, X } from "lucide-react";
 import { useDialog } from "./useDialog";
+import { CaseId } from "./CaseId";
 
-export function ClearChecksDialog({ count, activeCount, caseTitle, onClose, onConfirm }: {
+export function ClearChecksDialog({ count, activeCount, caseTitle, caseId, onClose, onConfirm }: {
   count: number;
   activeCount: number;
   caseTitle?: string;
+  caseId?: string;
   onClose: () => void;
   onConfirm: () => Promise<void>;
 }) {
@@ -33,6 +35,7 @@ export function ClearChecksDialog({ count, activeCount, caseTitle, onClose, onCo
       <button type="button" className="close" aria-label="Закрыть предупреждение" disabled={busy} onClick={onClose}><X /></button>
       <span className="clear-checks-icon"><Trash2 size={25} /></span>
       <h2 id="clear-checks-title">{single ? "Удалить проверку?" : "Очистить последние проверки?"}</h2>
+      {single && caseId && <div className="delete-check-id"><CaseId id={caseId} /></div>}
       <p id="clear-checks-warning">{single
         ? <>Будет удалена проверка <strong className="delete-check-name">«{caseTitle}»</strong> вместе с загруженными копиями документов, результатами и историей запусков. <strong>Восстановить её не получится.</strong></>
         : <>Будут удалены проверки из списка последних: <strong>{count}</strong>, а также их загруженные копии документов, результаты и история запусков. <strong>Восстановить их не получится.</strong></>}</p>

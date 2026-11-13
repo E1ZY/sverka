@@ -1,5 +1,6 @@
 import { CheckCheck, ChevronRight, CircleAlert, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { CaseId } from "./CaseId";
 
 type BatchItem = {
   fixture_id: string;
@@ -161,6 +162,7 @@ export function FixtureBatchResults({
             </span>
             <div className="fixture-batch-item-text">
               <strong>{item.title}</strong>
+              {item.case_id && <CaseId id={item.case_id} compact />}
               <p>
                 {item.message}
                 {item.differences > 0 ? ` Отличий: ${item.differences}.` : ""}

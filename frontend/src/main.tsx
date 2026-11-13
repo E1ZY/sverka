@@ -41,6 +41,7 @@ import { CheckTutorial, type TutorialStep } from "./CheckTutorial";
 import { ExampleQuestion, TaskExampleSuccess, type TaskExample } from "./TaskExampleTutorial";
 import { AuthGate } from "./AuthGate";
 import { authFetch } from "./auth";
+import { CaseId } from "./CaseId";
 
 type Evidence = {
   text: string;
@@ -500,9 +501,9 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
     draft: "Черновик",
   };
   const filteredCases = cases.filter((item) =>
-    `${item.title} ${item.context.contract}`
+    `${item.title} ${item.context.contract} ID: ${item.id}`
       .toLowerCase()
-      .includes(caseQuery.toLowerCase()),
+      .includes(caseQuery.trim().toLowerCase()),
   );
   const filteredDocs = docs.filter((d) =>
     d.name.toLowerCase().includes(search.toLowerCase()),
@@ -578,7 +579,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
           <Search size={15} />
           <input
             aria-label="Найти проверку"
-            placeholder="Название или договор"
+            placeholder="Название, договор или ID"
             value={caseQuery}
             onChange={(e) => setCaseQuery(e.target.value)}
           />
@@ -598,6 +599,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
               />
               <span className="case-link-info">
                 {c.title}
+                <CaseId id={c.id} compact />
                 <small>
                   {caseLabels[c.status] || c.status}
                   {c.created_at
@@ -654,6 +656,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                   ? "Сопоставление показателей КФЗ с первичными документами"
                   : "Загрузите отчёт и первичные документы. Мы соберём расчёт и покажем источники каждого результата."}
               </p>
+              {current && <div className="page-case-id"><CaseId id={current.id} /></div>}
             </div>
             <div className="heading-actions">
               {!showWelcome && <button className="button example-trigger" onClick={openExample} title="Учебный пример с готовыми документами">
@@ -750,7 +753,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                         <Search size={16} />
                         <input
                           aria-label="Поиск по проверкам"
-                          placeholder="Название или договор"
+                          placeholder="Название, договор или ID"
                           value={caseQuery}
                           onChange={(e) => setCaseQuery(e.target.value)}
                         />
@@ -768,6 +771,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                       <FileCheck2 size={21} />
                       <div>
                         <strong>{c.title}</strong>
+                        <CaseId id={c.id} compact />
                         <small>
                           Договор {c.context.contract} · Этап {c.context.stage}
                           {c.created_at
@@ -790,8 +794,8 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                   ))}
                   {!filteredCases.length && (
                     <div className="empty-small">
-                      Ничего не найдено. Попробуйте другое название или номер
-                      договора.
+                      Ничего не найдено. Попробуйте другое название, номер
+                      договора или ID проверки.
                     </div>
                   )}
                 </section>
@@ -1477,6 +1481,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
         onStepChange={changeExampleStep} onClose={cancelExample} onFinish={finishExample} />}
       {clearChecks && <ClearChecksDialog count={clearChecks.ids.length} activeCount={clearChecks.activeCount}
         caseTitle={clearChecks.caseTitle}
+        caseId={clearChecks.caseTitle !== undefined ? clearChecks.ids[0] : undefined}
         onClose={() => setClearChecks(null)} onConfirm={confirmClearChecks} />}
       {exampleSuccess && <TaskExampleSuccess {...exampleSuccess} onClose={() => setExampleSuccess(null)}
         onNew={() => { setExampleSuccess(null); openNew(); }} />}
