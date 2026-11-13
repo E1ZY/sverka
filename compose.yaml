@@ -15,10 +15,13 @@ services:
   api:
     build: .
     image: reconciliation-mvp:local
-    environment: &app-env
-      DATABASE_URL: postgresql+psycopg://audit:${POSTGRES_PASSWORD:-local-audit-password}@db:5432/reconciliation
-      DATA_DIR: /data
-      EMBED_WORKER: "false"
+    environment:
+      <<: &app-env
+        DATABASE_URL: postgresql+psycopg://audit:${POSTGRES_PASSWORD:-local-audit-password}@db:5432/reconciliation
+        DATA_DIR: /data
+        EMBED_WORKER: "false"
+      AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:-}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

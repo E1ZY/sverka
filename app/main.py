@@ -31,6 +31,7 @@ from .uploads import validate_file
 from .report_context import extract_report_context
 from .fixtures import compare_fixture, fixture_inputs, list_fixtures, load_oracle
 from .fixture_batches import batch_dict
+from .auth import install_auth
 
 
 @asynccontextmanager
@@ -48,6 +49,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title='Контур сверки', version='1.0.0', lifespan=lifespan)
+install_auth(app)
 
 
 class Context(BaseModel):

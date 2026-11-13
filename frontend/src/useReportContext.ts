@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { authFetch } from "./auth";
 
 export type ContextField = "contract" | "stage" | "period_start" | "period_end";
 type Suggestion = {
@@ -58,7 +59,7 @@ export function useReportContext() {
     try {
       const body = new FormData();
       body.append("file", file);
-      const response = await fetch("/api/reports/context", { method: "POST", body, signal: request.signal });
+      const response = await authFetch("/api/reports/context", { method: "POST", body, signal: request.signal });
       if (!response.ok) throw new Error("Не удалось распознать параметры КФЗ. Заполните их вручную.");
       const result: Suggestion = await response.json();
       if (generation.current !== currentGeneration) return;

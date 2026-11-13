@@ -75,6 +75,14 @@ class FixtureBatch(Base):
     items: Mapped[list] = mapped_column(JSON, default=list)
 
 
+class AuthSession(Base):
+    __tablename__ = 'auth_sessions'
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    credential_tag: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 engine = create_engine(DATABASE_URL, **({'connect_args': {'check_same_thread': False, 'timeout': 30}} if DATABASE_URL.startswith('sqlite') else {}))
 if DATABASE_URL.startswith('sqlite'):
     @event.listens_for(engine, 'connect')

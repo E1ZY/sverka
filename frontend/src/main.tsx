@@ -18,6 +18,7 @@ import {
   History,
   Layers3,
   Loader2,
+  LogOut,
   Plus,
   RefreshCw,
   Search,
@@ -38,6 +39,8 @@ import { DocumentImagePreview } from "./DocumentImagePreview";
 import { ClearChecksDialog } from "./ClearChecksDialog";
 import { CheckTutorial, type TutorialStep } from "./CheckTutorial";
 import { ExampleQuestion, TaskExampleSuccess, type TaskExample } from "./TaskExampleTutorial";
+import { AuthGate } from "./AuthGate";
+import { authFetch } from "./auth";
 
 type Evidence = {
   text: string;
@@ -205,7 +208,7 @@ const rub = (value: string | null | undefined) =>
 const dt = (value: string) =>
   new Date(value + "T12:00:00").toLocaleDateString("ru-RU");
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch("/api" + path, init);
+  const r = await authFetch("/api" + path, init);
   if (!r.ok) {
     let detail = await r.json().catch(() => ({ detail: "Ошибка соединения" }));
     throw Object.assign(
@@ -239,7 +242,7 @@ function Badge({ status }: { status: string }) {
   );
 }
 
-function App() {
+function App({ onLogout }: { onLogout: () => Promise<void> }) {
   const [cases, setCases] = useState<Case[]>([]),
     [selected, setSelected] = useState<string | null>(
       localStorage.getItem("active-case"),
@@ -633,6 +636,7 @@ function App() {
                 : "Рабочее пространство"}
             </strong>
           </div>
+          <button className="button auth-logout" disabled={busy} onClick={() => action(onLogout)}><LogOut size={15} />Выйти</button>
         </header>
         <div className="main-content">
           <div className="page-heading">
@@ -2029,7 +2033,7 @@ function NewCaseModal({
     try {
       const documents = await api<TrainingDocument[]>(`/demo/documents?role=${role}`, { signal: request.signal });
       const files = await Promise.all(documents.map(async (document) => {
-        const response = await fetch(document.url, { signal: request.signal });
+        const response = await authFetch(document.url, { signal: request.signal });
         if (!response.ok) throw new Error("Не удалось получить учебный документ.");
         const blob = await response.blob();
         return new File([blob], document.name, { type: blob.type, lastModified: document.last_modified });
@@ -2711,4 +2715,4 @@ function rangeContains(range: string, cell: string) {
     Number(cell.replace(/\D/g, "")) <= Number(points[1].replace(/\D/g, ""))
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(<AuthGate>{(logout) => <App onLogout={logout} />}</AuthGate>);

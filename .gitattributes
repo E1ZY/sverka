@@ -1,0 +1,2 @@
+# PDFs are byte-sensitive, including the deliberately truncated test fixture.
+*.pdf binary
