@@ -343,16 +343,37 @@ def export(case_id: str, run_id: str, format: Literal['json', 'csv'] = 'json'):
         return Response(content, media_type=media, headers={'Content-Disposition': f'attachment; filename="reconciliation-{run.id}.{format}"'})
 
 
+def demo_document_sources():
+    manifest = json.loads((ROOT/'demo'/'manifest.json').read_text(encoding='utf-8'))
+    directory = DEMO_DIR.resolve()
+    files = [(index, item, (directory/item['name']).resolve()) for index, item in enumerate(manifest['files'])]
+    if any(not path.is_relative_to(directory) or not path.is_file() for _, _, path in files):
+        raise HTTPException(404, 'Демонстрационные документы не установлены полностью')
+    return files
+
+
+@app.get('/api/demo/documents')
+def demo_document_list(role: Literal['report', 'primary']):
+    return [{'name': path.name, 'url': f'/api/demo/documents/{index}/original',
+             'last_modified': int(path.stat().st_mtime * 1000)}
+            for index, item, path in demo_document_sources() if item['role'] == role]
+
+
+@app.get('/api/demo/documents/{index}/original')
+def demo_document_original(index: int):
+    files = demo_document_sources()
+    if not 0 <= index < len(files):
+        raise HTTPException(404, 'Учебный документ не найден')
+    path = files[index][2]
+    return FileResponse(path, filename=path.name)
+
+
 @app.get('/api/demo/documents.zip')
 def demo_documents():
-    manifest = json.loads((ROOT/'demo'/'manifest.json').read_text(encoding='utf-8'))
-    files = [(DEMO_DIR/item['name'], item['role']) for item in manifest['files']]
-    if any(not path.is_file() for path, _ in files):
-        raise HTTPException(404, 'Демонстрационные документы не установлены полностью')
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as kit:
-        for path, role in files:
-            kit.write(path, f'{role}/{path.name}')
+        for _, item, path in demo_document_sources():
+            kit.write(path, f"{item['role']}/{path.name}")
     return Response(archive.getvalue(), media_type='application/zip',
                     headers={'Content-Disposition': 'attachment; filename="sverka-training-documents.zip"'})
 

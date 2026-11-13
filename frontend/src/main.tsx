@@ -1976,6 +1976,8 @@ const trainingScope = {
   period_start: "2026-01-01",
   period_end: "2026-05-31",
 };
+type TrainingDocument = { name: string; url: string; last_modified: number };
+type TrainingDocumentRole = "report" | "primary";
 
 function NewCaseModal({
   onClose,
@@ -1996,6 +1998,13 @@ function NewCaseModal({
   const [completePackage, setCompletePackage] = useState(false);
   const [reportFiles, setReportFiles] = useState<File[]>([]);
   const [primaryFiles, setPrimaryFiles] = useState<File[]>([]);
+  const [trainingLoad, setTrainingLoad] = useState<TrainingDocumentRole | null>(null);
+  const [trainingFileError, setTrainingFileError] = useState<{ role: TrainingDocumentRole; message: string } | null>(null);
+  const trainingRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    trainingRequest.current?.abort();
+    trainingRequest.current = null;
+  }, []);
   const reportContext = useReportContext();
   const reportInput = useRef<HTMLInputElement>(null);
   const primaryInput = useRef<HTMLInputElement>(null);
@@ -2011,6 +2020,53 @@ function NewCaseModal({
     reportContext.values.period_end === trainingScope.period_end;
   const primaryReady = primaryFiles.length === 22 && primaryFiles.every((file) => validFile(file, false));
   const preparationReady = reportReady && scopeReady && primaryReady && completePackage;
+  const fillTrainingDocuments = async (role: TrainingDocumentRole) => {
+    if (!training || busy || trainingRequest.current) return;
+    const request = new AbortController();
+    trainingRequest.current = request;
+    setTrainingLoad(role);
+    setTrainingFileError(null);
+    try {
+      const documents = await api<TrainingDocument[]>(`/demo/documents?role=${role}`, { signal: request.signal });
+      const files = await Promise.all(documents.map(async (document) => {
+        const response = await fetch(document.url, { signal: request.signal });
+        if (!response.ok) throw new Error("Не удалось получить учебный документ.");
+        const blob = await response.blob();
+        return new File([blob], document.name, { type: blob.type, lastModified: document.last_modified });
+      }));
+      if (request.signal.aborted) return;
+      if (files.length !== (role === "report" ? 1 : 22) || files.some((file) => !validFile(file, role === "report"))) {
+        throw new Error("Учебный комплект неполон или содержит неподдерживаемый файл.");
+      }
+      if (role === "report") {
+        setReportFiles(files);
+        if (reportInput.current) reportInput.current.value = "";
+        void reportContext.inspect(files[0]);
+      } else {
+        setPrimaryFiles(files);
+        if (primaryInput.current) primaryInput.current.value = "";
+      }
+      setError("");
+    } catch {
+      if (!request.signal.aborted) {
+        setTrainingFileError({ role, message: "Не удалось добавить учебные документы. Повторите попытку или выберите файлы вручную." });
+        request.abort();
+      }
+    } finally {
+      if (trainingRequest.current === request) {
+        trainingRequest.current = null;
+        setTrainingLoad(null);
+      }
+    }
+  };
+  const trainingDocumentButton = (role: TrainingDocumentRole) => <>
+    <button type="button" className="button tutorial-fill-button" disabled={busy || trainingLoad !== null}
+      onClick={() => void fillTrainingDocuments(role)}>
+      {trainingLoad === role ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+      {trainingLoad === role ? "Добавляем документы…" : role === "report" ? "Подставить КФЗ примера" : "Подставить документы примера"}
+    </button>
+    {trainingFileError?.role === role && <p className="tutorial-file-error" role="alert">{trainingFileError.message}</p>}
+  </>;
   const fillTrainingScope = () => {
     if (!training || busy) return;
     reportContext.change("contract", trainingScope.contract);
@@ -2019,9 +2075,9 @@ function NewCaseModal({
     reportContext.change("period_end", trainingScope.period_end);
   };
   const trainingSteps: TutorialStep[] = [
-    { target: "report", title: "Выберите учебный КФЗ", text: "Скачайте и распакуйте учебный архив. Затем нажмите на выделенную область и выберите PDF из папки report.",
-      content: <a className="button tutorial-kit-link" href="/api/demo/documents.zip"><ArrowDownToLine size={16} />Скачать учебный архив</a>,
-      complete: reportReady, waitingText: "Выберите один непустой PDF, PNG или JPEG до 25 МБ.", successText: "Отчёт выбран. Проверим, какую строку будем сверять." },
+    { target: "report", anchor: "report", title: "Выберите учебный КФЗ", text: "Подставьте готовый КФЗ кнопкой ниже или скачайте архив и выберите PDF из папки report вручную.",
+      content: <>{trainingDocumentButton("report")}<a className="button tutorial-kit-link" href="/api/demo/documents.zip"><ArrowDownToLine size={16} />Скачать учебный архив</a></>,
+      complete: reportReady && trainingLoad !== "report", waitingText: trainingLoad === "report" ? "Подготавливаем учебный КФЗ…" : "Выберите один непустой PDF, PNG или JPEG до 25 МБ.", successText: "КФЗ выбран. Проверьте файл и нажмите «Далее»." },
     { target: "scope", anchor: "scope", title: "Проверьте параметры примера", text: "Заполним договор, этап и период учебной проверки. Значения можно изменить.",
       content: <>
         <button type="button" className="button tutorial-fill-button" disabled={busy}
@@ -2031,8 +2087,9 @@ function NewCaseModal({
       </>,
       complete: scopeReady, waitingText: "Укажите договор 24/03/15-01, этап 3 и период с 01.01.2026 по 31.05.2026.",
       successText: "Параметры заполнены. Проверьте значения и нажмите «Далее»." },
-    { target: "primary", title: "Выберите первичные документы", text: "Нажмите на выделенную область и выберите все 22 файла из папки primary распакованного учебного архива.",
-      complete: primaryReady, waitingText: `Выбрано ${primaryFiles.length} из 22 документов. Нужны непустые файлы поддерживаемых форматов до 25 МБ каждый.`, successText: "Все 22 первичных документа выбраны." },
+    { target: "primary", anchor: "primary", title: "Выберите первичные документы", text: "Подставьте все 22 документа кнопкой ниже или выберите их вручную из папки primary распакованного учебного архива.",
+      content: trainingDocumentButton("primary"),
+      complete: primaryReady && trainingLoad !== "primary", waitingText: trainingLoad === "primary" ? "Подготавливаем учебные документы…" : `Выбрано ${primaryFiles.length} из 22 документов. Нужны непустые файлы поддерживаемых форматов до 25 МБ каждый.`, successText: "Все 22 документа выбраны. Проверьте список и нажмите «Далее»." },
     { target: "complete", title: "Подтвердите полноту комплекта", text: "В учебном комплекте представлены все первичные документы за выбранный период. Отметьте это, чтобы сверка могла сделать вывод о полной сумме расходов.",
       complete: completePackage, waitingText: "Поставьте галочку «Все первичные документы за период загружены».", successText: "Комплект отмечен как полный." },
     { target: "submit", title: "Запустите учебную сверку", text: "Документы и параметры готовы. Нажмите «Начать сверку»: файлы загрузятся, после обработки продолжим обучение на результатах.",
@@ -2040,7 +2097,7 @@ function NewCaseModal({
   ];
   const submit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (busy || (training && (trainingStep !== 4 || !preparationReady))) return;
+    if (busy || trainingLoad || (training && (trainingStep !== 4 || !preparationReady))) return;
     const form = new FormData(e.currentTarget);
     setError("");
     const allowedReport = /\.(pdf|png|jpe?g)$/i;
@@ -2175,7 +2232,7 @@ function NewCaseModal({
         </header>
         <form ref={formRef} onSubmit={submit} className="new-case-form">
           <div className="new-case-fields">
-            <fieldset disabled={busy}>
+            <fieldset disabled={busy || trainingLoad !== null}>
               <legend>
                 <span>1</span>Документы
               </legend>
@@ -2198,12 +2255,13 @@ function NewCaseModal({
                       aria-label="Итоговый отчёт КФЗ"
                       name="report"
                       type="file"
-                      required
+                      required={!reportFiles.length}
                       accept=".pdf,.png,.jpg,.jpeg"
                       onChange={(e) => {
                         const selected = Array.from(e.target.files || []);
                         setReportFiles(selected);
                         void reportContext.inspect(selected[0]);
+                        setTrainingFileError(null);
                         setError("");
                       }}
                     />
@@ -2215,6 +2273,7 @@ function NewCaseModal({
                       onClick={() => {
                         setReportFiles([]);
                         void reportContext.inspect();
+                        setTrainingFileError(null);
                         if (reportInput.current) reportInput.current.value = "";
                       }}
                     >
@@ -2244,11 +2303,12 @@ function NewCaseModal({
                       aria-label="Первичные документы"
                       name="primary"
                       type="file"
-                      required
+                      required={!primaryFiles.length}
                       multiple
                       accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg"
                       onChange={(e) => {
                         setPrimaryFiles(Array.from(e.target.files || []));
+                        setTrainingFileError(null);
                         setError("");
                       }}
                     />
@@ -2272,6 +2332,7 @@ function NewCaseModal({
                         className="text-button remove-files"
                         onClick={() => {
                           setPrimaryFiles([]);
+                          setTrainingFileError(null);
                           if (primaryInput.current)
                             primaryInput.current.value = "";
                         }}

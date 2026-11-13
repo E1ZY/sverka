@@ -132,6 +132,12 @@
 .tutorial-fill-button svg {
   flex-shrink: 0;
 }
+.tutorial-card .tutorial-file-error {
+  color: #a63f42;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 6px 0 12px;
+}
 .tutorial-source-readout {
   display: grid;
   gap: 6px;
