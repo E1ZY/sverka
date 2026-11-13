@@ -203,6 +203,17 @@
 .case-link-info {
   display: block;
 }
+.case-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  max-height: 2.9em;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  line-height: 1.45;
+}
 .case-id {
   display: inline-block;
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -238,6 +249,9 @@
   font-size: 10px;
   color: #b0c0d2;
   margin-top: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .case-link.selected {
   background: #304b69;
@@ -617,9 +631,8 @@ button.stat:hover {
   flex: 1;
   min-width: 0;
 }
-.overview-case strong {
+.overview-case .case-title {
   font-size: 14px;
-  display: block;
 }
 .overview-case small {
   display: block;

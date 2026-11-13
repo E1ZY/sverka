@@ -190,10 +190,10 @@ small {
   font-size: 11px;
   border-radius: 5px;
 }
-.case-link span:last-child {
+.case-link-info {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .case-link.selected {
   color: #f0f4f9;

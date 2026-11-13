@@ -598,7 +598,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                 }
               />
               <span className="case-link-info">
-                {c.title}
+                <span className="case-title">{c.title}</span>
                 <CaseId id={c.id} compact />
                 <small>
                   {caseLabels[c.status] || c.status}
@@ -767,10 +767,11 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                     <button
                       className="overview-case"
                       onClick={() => choose(c.id)}
+                      title={c.title}
                     >
                       <FileCheck2 size={21} />
                       <div>
-                        <strong>{c.title}</strong>
+                        <strong className="case-title">{c.title}</strong>
                         <CaseId id={c.id} compact />
                         <small>
                           Договор {c.context.contract} · Этап {c.context.stage}
