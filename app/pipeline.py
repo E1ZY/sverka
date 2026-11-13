@@ -9,6 +9,7 @@ from .config import PIPELINE_VERSION
 from .db import Case, Document, Review, Run, Session, engine, init_db, now
 from .domain import RULES, reconcile
 from .extractors import REPORT_PARSER_VERSION, extract_primary, extract_report
+from .document_validation import validation_log
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ def process(run_id):
                 run.lease_until = now() + timedelta(minutes=10)
                 session.commit()
                 key = (doc.sha256, doc.role)
-                if doc.extraction is None or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION):
+                if doc.extraction is None or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION) or (doc.role == 'primary' and 'business_metadata' not in doc.extraction):
                     try:
                         fact = cache.get(key)
                         if fact is None:
@@ -84,6 +85,7 @@ def process(run_id):
                     doc['extraction'].update(review['changes'])
                     doc['extraction'].update(needs_review=False, reviewed=True)
             result = reconcile(context, snapshot)
+            result['document_validation'] = validation_log(context, result)
             result.update(context=context, pipeline_version=PIPELINE_VERSION, rules_version=RULES['version'], reviews=reviews,
                           created_at=now().isoformat(), run_id=run.id)
             run.payload = result

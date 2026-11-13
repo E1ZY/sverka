@@ -14,10 +14,11 @@ from openpyxl import load_workbook
 from PIL import Image, ImageOps
 
 from . import ocr
+from .card_metadata import card_metadata
 from .domain import RULES, classify, money
 
 SUPPORTED = {'.pdf', '.docx', '.xlsx', '.png', '.jpg', '.jpeg'}
-REPORT_PARSER_VERSION = 'kfz-grid-v2'
+REPORT_PARSER_VERSION = 'kfz-grid-v3-tree'
 MONTHS = ['январ', 'феврал', 'март', 'апрел', 'ма', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр']
 CONTRACT = re.compile(r'\b\d{2}\s*/\s*\d{2}\s*/\s*\d{2}\s*[-–—]\s*\d{2}\b')
 AMOUNT = re.compile(r'(?<![\d/])[-−]?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)[,.]\d{2}(?!\d)')
@@ -107,7 +108,7 @@ def metadata(fragments):
     return {'contract': re.sub(r'\s', '', contract[0]).replace('–', '-').replace('—', '-') if contract else None,
             'number': number[1] if number else None, 'document_date': document_date,
             'period_start': period_start, 'period_end': period_end,
-            'counterparty': counterparty[1].strip() if counterparty else '', 'text': text}
+            'counterparty': counterparty[1].strip() if counterparty else '', 'text': text, 'business_metadata': card_metadata(fragments)}
 
 
 def extract_primary(path):
@@ -218,6 +219,7 @@ def extract_report(path, context):
     clean = Image.fromarray(255 - cv2.subtract(bw, cv2.bitwise_or(horizontal, vertical)))
     row = None
     labels = []
+    recognized_rows = []
     year = str(date.fromisoformat(context['period_start']).year)
     for y0, y1 in zip(ys, ys[1:]):
         if not 8 < y1-y0 < h * .055:
@@ -226,6 +228,10 @@ def extract_report(path, context):
         label_image = ImageOps.expand(label_image.resize((label_image.width*5, label_image.height*5), Image.Resampling.LANCZOS), border=15, fill='white')
         label = ocr.text(label_image, psm=7)
         labels.append(label)
+        stage_match = re.search(r'\b(\d+)\s*[эе]?тап', label, re.I)
+        year_match = re.search(r'20\d{2}', label)
+        if stage_match:
+            recognized_rows.append({'stage': int(stage_match[1]), 'year': int(year_match[0]) if year_match else None, 'bounds': (y0, y1)})
         if year in label and re.search(rf'\b{context["stage"]}\s*[эе]?тап', label, re.I):
             if row is not None:
                 raise ValueError('Найдено несколько строк с выбранными этапом и годом')
@@ -234,7 +240,7 @@ def extract_report(path, context):
         raise ValueError('Не найдена строка этапа и года: ' + ' | '.join(labels))
     values, evidence, confidences = {}, {}, []
     y0, y1 = row
-    for code, column in RULES['report_columns'].items():
+    def read_cell(column, y0, y1):
         x0, x1 = xs[column-1], xs[column]
         candidates = []
         native_text = pdf_region_text(path, [x0/w, y0/h, x1/w, y1/h])
@@ -251,15 +257,40 @@ def extract_report(path, context):
             if re.fullmatch(r'\d+,\d{2}', normalized):
                 candidates.append((confidence, str(money(normalized)), text))
         confidence, value, text = max(candidates, default=(0, None, ''), key=lambda c: c[0])
-        values[code] = value
+        return value, fragment(text, page=1, bbox=[x0/w, y0/h, x1/w, y1/h], confidence=round(confidence, 1), column=column), confidence
+    for code, column in RULES['report_columns'].items():
+        values[code], evidence[code], confidence = read_cell(column, *row)
         confidences.append(confidence)
-        evidence[code] = fragment(text, page=1, bbox=[x0/w, y0/h, x1/w, y1/h], confidence=round(confidence, 1), column=column)
+    cost_rows = []
+    for recognized in recognized_rows:
+        if recognized['stage'] not in (context['stage'], context['stage']-1):
+            continue
+        detail_values, detail_evidence = {}, {}
+        for column in (4, 7, 8, 9, 12, 13, 14, 15, 16):
+            value, locator, confidence = read_cell(column, *recognized['bounds'])
+            detail_values[str(column)] = value if confidence >= 45 else None
+            detail_evidence[str(column)] = locator
+        cost_rows.append({'stage': recognized['stage'], 'year': recognized['year'], 'values': detail_values, 'evidence': detail_evidence})
     # Header OCR separately avoids dense grid text corrupting contract identifiers.
     header = image.crop((0, 0, w, ys[0]))
     native_header = pdf_region_text(path, [0, 0, 1, ys[0]/h])
     header_fragments = [fragment(native_header, page=1, bbox=[0,0,1,ys[0]/h], confidence=100)] if native_header else image_fragments(header, 1)
+    if not native_header:
+        for item in header_fragments:
+            item['bbox'][1] *= ys[0]/h
+            item['bbox'][3] *= ys[0]/h
     data = metadata(header_fragments)
-    data.update(report_values=values, report_evidence=evidence, row_label=context['row_label'],
+    if not native_header:
+        business_fragments = image_fragments(header.resize((header.width*2, header.height*2), Image.Resampling.LANCZOS), 1)
+        for item in business_fragments:
+            item['bbox'][1] *= ys[0]/h
+            item['bbox'][3] *= ys[0]/h
+        detailed = card_metadata(business_fragments)
+        for key, item in detailed.items():
+            if item['status'] == 'missing' and data['business_metadata'][key]['value']:
+                detailed[key] = {**data['business_metadata'][key], 'status': 'uncertain'}
+        data['business_metadata'] = detailed
+    data.update(report_values=values, report_evidence=evidence, cost_rows=cost_rows, row_label=context['row_label'],
                 needs_review=any(v is None for v in values.values()) or min(confidences) < 45,
                 parser=REPORT_PARSER_VERSION, fragments=list(evidence.values()))
     return data

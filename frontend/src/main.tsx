@@ -42,6 +42,9 @@ import { ExampleQuestion, TaskExampleSuccess, type TaskExample } from "./TaskExa
 import { AuthGate } from "./AuthGate";
 import { authFetch } from "./auth";
 import { CaseId } from "./CaseId";
+import { ChecksTable, DocumentsRegister } from "./WorkspaceTables";
+import { CostTreePanel, type TreeSnapshot } from "./CostTreePanel";
+import "./workspace.css";
 
 type Evidence = {
   text: string;
@@ -130,6 +133,10 @@ type Case = {
   title: string;
   status: string;
   created_at?: string;
+  status_changed_at?: string | null;
+  user?: string;
+  check_type?: string;
+  cost_tree?: TreeSnapshot | null;
   context: {
     contract: string;
     stage: number;
@@ -270,7 +277,10 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
   const selection = useRef(selected);
   selection.current = selected;
   const detailDialog = useDialog(() => setDetail(null), false, !!detail);
+  const [workspaceDocuments, setWorkspaceDocuments] = useState(false);
+  const [copySource, setCopySource] = useState<Case | null>(null);
   const openNew = (tutorial = false) => {
+    setCopySource(null);
     setNewTutorial(tutorial);
     setNewOpen(true);
   };
@@ -313,6 +323,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
     return () => clearInterval(id);
   }, [running, pendingCases, selected]);
   const choose = (id: string) => {
+    setWorkspaceDocuments(false);
     if (!cases.some((item) => item.id === id)) setCaseQuery("");
     if (selection.current !== id) setCurrent(null);
     else refresh().catch((e) => setError(e.message));
@@ -327,6 +338,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
     setError("");
   };
   const overview = () => {
+    setWorkspaceDocuments(false);
     selection.current = null;
     setSelected(null);
     setCurrent(null);
@@ -345,11 +357,11 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
     if (busy || ["queued", "running"].includes(item.status)) return;
     setClearChecks({ ids: [item.id], activeCount: 0, caseTitle: item.title });
   };
-  const confirmClearChecks = async () => {
+  const confirmClearChecks = async (deleteUnlinked: boolean) => {
     if (!clearChecks) return;
     const ids = new Set(clearChecks.ids);
     const result = await api<{ deleted_ids: string[]; cleanup_failed: string[] }>("/cases", {
-      method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ case_ids: [...ids] }),
+      method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ case_ids: [...ids], delete_unlinked_documents: deleteUnlinked }),
     });
     ids.forEach((id) => removedCaseIds.current.add(id));
     setCases((items) => items.filter((item) => !ids.has(item.id)));
@@ -537,16 +549,15 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
         </a>
         <div className="workspace-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
         <button
-          className={"nav " + (tab === "checks" ? "active" : "")}
+          className={"nav " + (!workspaceDocuments && tab === "checks" ? "active" : "")}
           onClick={overview}
         >
           <FileCheck2 size={18} />
           Проверки<span className="nav-count">{cases.length}</span>
         </button>
         <button
-          className={"nav " + (tab === "documents" ? "active" : "")}
-          disabled={!current}
-          onClick={() => setTab("documents")}
+          className={"nav " + (workspaceDocuments ? "active" : "")}
+          onClick={() => { overview(); setWorkspaceDocuments(true); }}
         >
           <FolderOpen size={18} />
           Документы
@@ -563,65 +574,6 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
           <Layers3 size={18} />
           Примеры проверок
         </button>
-        <div className="sidebar-section">
-          <span>ПОСЛЕДНИЕ ПРОВЕРКИ</span>
-          <div className="sidebar-section-actions">
-            <button aria-label="Очистить последние проверки" title={clearableCases.length ? "Очистить последние проверки" : "Нет проверок для очистки"}
-              disabled={!clearableCases.length || busy} onClick={openClearChecks}>
-              <Trash2 size={15} />
-            </button>
-            <button aria-label="Новая проверка" onClick={() => openNew()}>
-              <Plus size={16} />
-            </button>
-          </div>
-        </div>
-        <label className="case-search">
-          <Search size={15} />
-          <input
-            aria-label="Найти проверку"
-            placeholder="Название, договор или ID"
-            value={caseQuery}
-            onChange={(e) => setCaseQuery(e.target.value)}
-          />
-        </label>
-        <div className="case-list">
-          {filteredCases.map((c) => (
-            <div className={"case-list-row " + (c.id === selected ? "selected" : "")} key={c.id}>
-            <button
-              className={"case-link " + (c.id === selected ? "selected" : "")}
-              onClick={() => choose(c.id)}
-              title={c.title}
-            >
-              <span
-                className={
-                  "case-dot " + (c.status === "completed" ? "done" : "")
-                }
-              />
-              <span className="case-link-info">
-                <span className="case-title">{c.title}</span>
-                <CaseId id={c.id} compact />
-                <small>
-                  {caseLabels[c.status] || c.status}
-                  {c.created_at
-                    ? " · " + new Date(c.created_at).toLocaleDateString("ru-RU")
-                    : ""}
-                </small>
-              </span>
-            </button>
-            <button className="case-delete" aria-label={`Удалить проверку «${c.title}»`}
-              title={["queued", "running"].includes(c.status) ? "Дождитесь завершения проверки" : "Удалить проверку"}
-              disabled={busy || ["queued", "running"].includes(c.status)} onClick={() => openDeleteCheck(c)}>
-              <Trash2 size={15} />
-            </button>
-            </div>
-          ))}
-          {!cases.length && (
-            <p className="sidebar-empty">Здесь появятся ваши проверки</p>
-          )}
-          {!!cases.length && !filteredCases.length && (
-            <p className="sidebar-empty">Проверки не найдены</p>
-          )}
-        </div>
       </aside>
       <main>
         <header className="topbar">
@@ -640,6 +592,10 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
           </div>
           <button className="button auth-logout" disabled={busy} onClick={() => action(onLogout)}><LogOut size={15} />Выйти</button>
         </header>
+        <nav className="workspace-mobile-nav" aria-label="Основные разделы">
+          <button className={!workspaceDocuments ? 'active' : ''} onClick={overview}>Сверки</button>
+          <button className={workspaceDocuments ? 'active' : ''} onClick={()=>{overview();setWorkspaceDocuments(true);}}>Документы</button>
+        </nav>
         <div className="main-content">
           <div className="page-heading">
             <div>
@@ -649,16 +605,18 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                   ? current.title
                   : selected
                     ? "Открываем проверку…"
-                    : "Сверка отчётности"}
+                    : workspaceDocuments ? "Документы" : "Сверки отчётности"}
               </h1>
               <p>
                 {current
                   ? "Сопоставление показателей КФЗ с первичными документами"
-                  : "Загрузите отчёт и первичные документы. Мы соберём расчёт и покажем источники каждого результата."}
+                  : workspaceDocuments ? "Оригиналы документов и связи со сверками. Одинаковые файлы объединены по содержимому." : "Загрузите отчёт и первичные документы. Мы соберём расчёт и покажем источники каждого результата."}
               </p>
               {current && <div className="page-case-id"><CaseId id={current.id} /></div>}
             </div>
             <div className="heading-actions">
+              {current && <><button className="button" disabled={busy || running} onClick={() => { setCopySource(current); setNewOpen(true); }}>Изменить и запустить новую</button>
+              {current.result && !running && <a className="button" href={`/api/cases/${current.id}/package.zip`}><ArrowDownToLine size={16}/>Пакет документов</a>}</>}
               {!showWelcome && <button className="button example-trigger" onClick={openExample} title="Учебный пример с готовыми документами">
                 <GraduationCap size={17} />Учебный пример
               </button>}
@@ -697,7 +655,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
             {(current?.status === "failed" || (current?.status === "completed" && !exampleReady)) &&
               <button className="button" disabled={busy} onClick={start}>Повторить обработку</button>}
           </section>}
-          {!current && selected ? (
+          {workspaceDocuments ? <DocumentsRegister onOpen={choose}/> : !current && selected ? (
             <div className="panel empty-small" role="status">
               <Loader2 className="spin" />
               <p>Загружаем документы и результаты…</p>
@@ -741,66 +699,10 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                   <p className="welcome-note">Учебный пример можно прервать в любой момент.</p>
                 </div>
               )}
-              {!!cases.length && (
-                <section className="panel overview-cases">
-                  <div className="panel-heading">
-                    <h2>
-                      Ваши проверки{" "}
-                      <span className="subtle">{cases.length}</span>
-                    </h2>
-                    <div className="overview-case-tools">
-                      <label className="search">
-                        <Search size={16} />
-                        <input
-                          aria-label="Поиск по проверкам"
-                          placeholder="Название, договор или ID"
-                          value={caseQuery}
-                          onChange={(e) => setCaseQuery(e.target.value)}
-                        />
-                      </label>
-                      <button className="button clear-checks-trigger" disabled={!clearableCases.length || busy} onClick={openClearChecks}
-                        aria-label="Очистить последние проверки"><Trash2 size={16} />Очистить</button>
-                    </div>
-                  </div>
-                  {filteredCases.map((c) => (
-                    <div className="overview-case-row" key={c.id}>
-                    <button
-                      className="overview-case"
-                      onClick={() => choose(c.id)}
-                      title={c.title}
-                    >
-                      <FileCheck2 size={21} />
-                      <div>
-                        <strong className="case-title">{c.title}</strong>
-                        <CaseId id={c.id} compact />
-                        <small>
-                          Договор {c.context.contract} · Этап {c.context.stage}
-                          {c.created_at
-                            ? " · " +
-                              new Date(c.created_at).toLocaleString("ru-RU")
-                            : ""}
-                        </small>
-                      </div>
-                      <span className={"case-status " + c.status}>
-                        {caseLabels[c.status] || c.status}
-                      </span>
-                      <ChevronRight size={17} />
-                    </button>
-                    <button className="case-delete" aria-label={`Удалить проверку «${c.title}»`}
-                      title={["queued", "running"].includes(c.status) ? "Дождитесь завершения проверки" : "Удалить проверку"}
-                      disabled={busy || ["queued", "running"].includes(c.status)} onClick={() => openDeleteCheck(c)}>
-                      <Trash2 size={17} />
-                    </button>
-                    </div>
-                  ))}
-                  {!filteredCases.length && (
-                    <div className="empty-small">
-                      Ничего не найдено. Попробуйте другое название, номер
-                      договора или ID проверки.
-                    </div>
-                  )}
-                </section>
-              )}
+              {!!cases.length && <ChecksTable items={cases} query={caseQuery} onQuery={setCaseQuery} onOpen={choose}
+                onEdit={(id) => void action(async () => { setCopySource(await api<Case>("/cases/" + id)); setNewOpen(true); })}
+                onDelete={(id) => { const item = cases.find(value => value.id === id); if (item) openDeleteCheck(item); }}
+                onClear={openClearChecks} busy={busy}/>}
             </>
           ) : (
             <>
@@ -1043,6 +945,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                   </button>
                 </div>
               </div>
+              {tab === "checks" && current.cost_tree && <CostTreePanel key={current.active_run_id} tree={current.cost_tree} onSource={showSource}/>}
               {tab === "checks" &&
                 (result ? (
                   <>
@@ -1332,7 +1235,8 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
       </main>
       {newOpen && (
         <NewCaseModal
-          initialTutorial={newTutorial}
+          initialTutorial={newTutorial && !copySource}
+          sourceCase={copySource}
           onClose={() => setNewOpen(false)}
           onDone={(id) => {
             setNewOpen(false);
@@ -1994,18 +1898,21 @@ function NewCaseModal({
   onDone,
   initialTutorial = false,
   training = false,
+  sourceCase = null,
 }: {
   onClose: () => void;
   onDone: (id: string) => void;
   initialTutorial?: boolean;
   training?: boolean;
+  sourceCase?: Case | null;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [progress, setProgress] = useState("");
   const [tutorialOpen, setTutorialOpen] = useState(initialTutorial);
   const [trainingStep, setTrainingStep] = useState(0);
-  const [completePackage, setCompletePackage] = useState(false);
+  const [completePackage, setCompletePackage] = useState(sourceCase?.context.complete_package || false);
+  const [retainedFiles, setRetainedFiles] = useState<Doc[]>(sourceCase?.documents || []);
   const [reportFiles, setReportFiles] = useState<File[]>([]);
   const [primaryFiles, setPrimaryFiles] = useState<File[]>([]);
   const [trainingLoad, setTrainingLoad] = useState<TrainingDocumentRole | null>(null);
@@ -2016,6 +1923,10 @@ function NewCaseModal({
     trainingRequest.current = null;
   }, []);
   const reportContext = useReportContext();
+  useEffect(() => {
+    if (!sourceCase) return;
+    for (const field of ["contract", "stage", "period_start", "period_end"] as const) reportContext.change(field, String(sourceCase.context[field]));
+  }, [sourceCase?.id]);
   const reportInput = useRef<HTMLInputElement>(null);
   const primaryInput = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -2113,11 +2024,11 @@ function NewCaseModal({
     const allowedReport = /\.(pdf|png|jpe?g)$/i;
     const allowedPrimary = /\.(pdf|docx|xlsx|png|jpe?g)$/i;
     const files = [...reportFiles, ...primaryFiles];
-    if (reportFiles.length !== 1 || !primaryFiles.length) {
+    if (reportFiles.length + retainedFiles.filter(file => file.role === "report").length !== 1 || !primaryFiles.length && !retainedFiles.some(file => file.role === "primary")) {
       setError("Выберите один отчёт и хотя бы один первичный документ.");
       return;
     }
-    if (files.length > 100) {
+    if (files.length + retainedFiles.length > 100) {
       setError(
         "В одной проверке можно загрузить до 100 файлов, включая отчёт.",
       );
@@ -2163,7 +2074,7 @@ function NewCaseModal({
     }
     const signature = JSON.stringify([
       context,
-      files.map((file) => [file.name, file.size, file.lastModified]),
+      files.map((file) => [file.name, file.size, file.lastModified]), retainedFiles.map(file=>file.id),
     ]);
     reportContext.stop();
     setTutorialOpen(false);
@@ -2171,7 +2082,7 @@ function NewCaseModal({
     try {
       setProgress("Создаём проверку…");
       if (attempt.current?.signature !== signature) {
-        const created = await api<Case>("/cases", json(context));
+        const created = await api<Case>(sourceCase ? `/cases/${sourceCase.id}/copy` : "/cases", json(sourceCase ? { ...context, document_ids: retainedFiles.map(file=>file.id) } : context));
         attempt.current = { id: created.id, signature };
       }
       const caseId = attempt.current!.id;
@@ -2189,9 +2100,9 @@ function NewCaseModal({
         ["report", reportFiles],
         ["primary", primaryFiles],
       ] as const) {
-        if (
+        if (!selectedFiles.length ||
           draft.documents?.filter((d) => d.role === role).length ===
-          selectedFiles.length
+          selectedFiles.length + retainedFiles.filter(file=>file.role === role).length
         )
           continue;
         setProgress(
@@ -2225,8 +2136,9 @@ function NewCaseModal({
       >
         <header className="new-case-heading">
           <span className="eyebrow">{training ? "ПРАКТИКА С ПОДСКАЗКАМИ" : "СВЕРКА ПО ВАШИМ ДОКУМЕНТАМ"}</span>
-          <h2>{training ? "Проверим учебный комплект" : "Новая проверка"}</h2>
+          <h2>{training ? "Проверим учебный комплект" : sourceCase ? "Новая сверка на основе существующей" : "Новая проверка"}</h2>
           <p>{training ? "Выберите КФЗ и 22 первичных документа из учебного архива. Каждый шаг откроется после выполнения предыдущего." : "Добавьте документы и укажите, какую строку отчёта проверить."}</p>
+          {sourceCase && <p className="copy-origin">На основе {sourceCase.id.slice(0,8)}. Документы и параметры можно изменить. Прежняя сверка сохранится.</p>}
           {!training && <button type="button" className="tutorial-start" data-tutorial-start
             disabled={busy} onClick={() => setTutorialOpen(true)}>
             <CircleHelp size={16} />Показать подсказки
@@ -2242,121 +2154,30 @@ function NewCaseModal({
         </header>
         <form ref={formRef} onSubmit={submit} className="new-case-form">
           <div className="new-case-fields">
-            <fieldset disabled={busy || trainingLoad !== null}>
-              <legend>
-                <span>1</span>Документы
-              </legend>
-              <div className="upload-grid">
-                <div data-tutorial="report">
-                  <label
-                    className={
-                      "file-input " + (reportFiles.length ? "selected" : "")
-                    }
-                  >
-                    <FileText size={23} />
-                    <span>
-                      <strong>
-                        {reportFiles[0]?.name || "Выберите отчёт КФЗ"}
-                      </strong>
-                      <small>Один PDF, PNG или JPEG · до 25 МБ</small>
-                    </span>
-                    <input
-                      ref={reportInput}
-                      aria-label="Итоговый отчёт КФЗ"
-                      name="report"
-                      type="file"
-                      required={!reportFiles.length}
-                      accept=".pdf,.png,.jpg,.jpeg"
-                      onChange={(e) => {
-                        const selected = Array.from(e.target.files || []);
-                        setReportFiles(selected);
-                        void reportContext.inspect(selected[0]);
-                        setTrainingFileError(null);
-                        setError("");
-                      }}
-                    />
-                  </label>
-                  {!!reportFiles.length && (
-                    <button
-                      type="button"
-                      className="text-button remove-files"
-                      onClick={() => {
-                        setReportFiles([]);
-                        void reportContext.inspect();
-                        setTrainingFileError(null);
-                        if (reportInput.current) reportInput.current.value = "";
-                      }}
-                    >
-                      Убрать отчёт
-                    </button>
-                  )}
-                </div>
-                <div data-tutorial="primary">
-                  <label
-                    className={
-                      "file-input " + (primaryFiles.length ? "selected" : "")
-                    }
-                  >
-                    <Files size={23} />
-                    <span>
-                      <strong>
-                        {primaryFiles.length
-                          ? `Выбрано документов: ${primaryFiles.length}`
-                          : "Выберите первичные документы"}
-                      </strong>
-                      <small>
-                        PDF, DOCX, XLSX, PNG, JPEG · до 25 МБ каждый
-                      </small>
-                    </span>
-                    <input
-                      ref={primaryInput}
-                      aria-label="Первичные документы"
-                      name="primary"
-                      type="file"
-                      required={!primaryFiles.length}
-                      multiple
-                      accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg"
-                      onChange={(e) => {
-                        setPrimaryFiles(Array.from(e.target.files || []));
-                        setTrainingFileError(null);
-                        setError("");
-                      }}
-                    />
-                  </label>
-                  {!!primaryFiles.length && (
-                    <>
-                      <p
-                        className="selected-files"
-                        title={primaryFiles.map((file) => file.name).join("\n")}
-                      >
-                        {primaryFiles
-                          .slice(0, 3)
-                          .map((file) => file.name)
-                          .join(", ")}
-                        {primaryFiles.length > 3
-                          ? ` и ещё ${primaryFiles.length - 3}`
-                          : ""}
-                      </p>
-                      <button
-                        type="button"
-                        className="text-button remove-files"
-                        onClick={() => {
-                          setPrimaryFiles([]);
-                          setTrainingFileError(null);
-                          if (primaryInput.current)
-                            primaryInput.current.value = "";
-                        }}
-                      >
-                        Убрать документы
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
+            <fieldset disabled={busy || trainingLoad !== null} data-tutorial="report">
+              <legend><span>1</span>Загрузите главный отчёт</legend>
+              <label className="file-input upload-button"><FileText size={20}/><strong>Загрузить главный отчёт</strong><small>Один PDF, PNG или JPEG · до 25 МБ</small>
+                <input ref={reportInput} aria-label="Итоговый отчёт КФЗ" name="report" type="file" required={!reportFiles.length && !retainedFiles.some(file=>file.role === "report")} accept=".pdf,.png,.jpg,.jpeg"
+                  onChange={event=>{const files=Array.from(event.target.files || []); if (!files.length) return; setReportFiles(files); setRetainedFiles(current=>current.filter(file=>file.role!=="report")); void reportContext.inspect(files[0]); setError("");}}/>
+              </label>
+              <ul className="upload-file-list">{reportFiles.map((file,index)=><li key={index}><FileText size={16}/><span>{file.name}<small>{Math.max(1,Math.round(file.size/1024))} КБ</small></span><button type="button" className="icon-button" title="Удалить главный отчёт" aria-label="Удалить главный отчёт" onClick={()=>{setReportFiles([]); void reportContext.inspect(); if(reportInput.current) reportInput.current.value="";}}><X size={17}/></button></li>)}
+                {retainedFiles.filter(file=>file.role==="report").map(file=><li key={file.id}><FileText size={16}/><span>{file.name}<small>Из исходной сверки</small></span><button type="button" className="icon-button" title="Удалить главный отчёт" aria-label="Удалить главный отчёт" onClick={()=>setRetainedFiles(current=>current.filter(value=>value.id!==file.id))}><X size={17}/></button></li>)}
+              </ul>
+            </fieldset>
+            <fieldset disabled={busy || trainingLoad !== null} data-tutorial="primary">
+              <legend><span>2</span>Загрузите отчётные документы</legend>
+              <label className="file-input upload-button"><Files size={20}/><strong>Добавить отчётные документы</strong><small>PDF, DOCX, XLSX, PNG, JPEG · до 25 МБ каждый</small>
+                <input ref={primaryInput} aria-label="Первичные документы" name="primary" type="file" multiple required={!primaryFiles.length && !retainedFiles.some(file=>file.role === "primary")} accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg"
+                  onChange={event=>{const files=Array.from(event.target.files || []); setPrimaryFiles(current=>[...current,...files.filter(file=>!current.some(previous=>previous.name===file.name && previous.size===file.size && previous.lastModified===file.lastModified))]); if(primaryInput.current) primaryInput.current.value=""; setError("");}}/>
+              </label>
+              <ul className="upload-file-list">{retainedFiles.filter(file=>file.role==="primary").map(file=><li key={file.id}><FileText size={16}/><span>{file.name}<small>Из исходной сверки</small></span><button type="button" className="icon-button danger-text" title="Удалить отчётный документ" aria-label={`Удалить ${file.name}`} onClick={()=>setRetainedFiles(current=>current.filter(value=>value.id!==file.id))}><Trash2 size={16}/></button></li>)}
+                {primaryFiles.map((file,index)=><li key={index}><FileText size={16}/><span>{file.name}<small>{Math.max(1,Math.round(file.size/1024))} КБ</small></span><button type="button" className="icon-button danger-text" title="Удалить отчётный документ" aria-label={`Удалить ${file.name}`} onClick={()=>setPrimaryFiles(current=>current.filter((_,i)=>i!==index))}><Trash2 size={16}/></button></li>)}
+              </ul>
+              {(primaryFiles.length>0 || retainedFiles.some(file=>file.role==="primary")) && <button type="button" className="text-button danger-text" onClick={()=>{setPrimaryFiles([]); setRetainedFiles(current=>current.filter(file=>file.role!=="primary")); if(primaryInput.current) primaryInput.current.value="";}}>Удалить все отчётные документы</button>}
             </fieldset>
             <fieldset disabled={busy}>
               <legend>
-                <span>2</span>Область сверки
+                <span>3</span>Параметры сверки
               </legend>
               <p className="form-help" id="scope-help">
                 Договор исключает чужие документы, этап выбирает строку КФЗ,
@@ -2376,7 +2197,7 @@ function NewCaseModal({
                 <input
                   name="title"
                   required
-                  defaultValue={training ? "Учебная сверка · этап 3" : "Сверка затрат"}
+                  defaultValue={training ? "Учебная сверка · этап 3" : sourceCase ? `${sourceCase.title} — копия`.slice(0,200) : "Сверка затрат"}
                   maxLength={200}
                 />
               </label>
@@ -2454,7 +2275,7 @@ function NewCaseModal({
             <span role="status">
               {busy
                 ? progress
-                : `${reportFiles.length ? "Отчёт выбран" : "Отчёт не выбран"} · Первичных документов: ${primaryFiles.length}`}
+                : `${reportFiles.length || retainedFiles.some(file=>file.role==="report") ? "Отчёт выбран" : "Отчёт не выбран"} · Отчётных документов: ${primaryFiles.length + retainedFiles.filter(file=>file.role==="primary").length}`}
             </span>
             <button className="button primary" type="submit" disabled={busy || (training && (trainingStep !== 4 || !preparationReady))} data-tutorial="submit">
               {busy ? (

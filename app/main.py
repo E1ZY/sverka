@@ -9,7 +9,7 @@ import tempfile
 import threading
 import zipfile
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, timezone
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -21,9 +21,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
+from starlette.background import BackgroundTask
 
 from .config import DATA, DEMO_DIR, MAX_CASE_FILES, MAX_FILE_BYTES, ROOT
-from .db import Case, Document, FixtureBatch, Review, Run, Session, init_db, uid
+from .db import Case, Document, DocumentAsset, FixtureBatch, Review, Run, Session, init_db, uid
 from .domain import ARTICLES, money
 from .extractors import SUPPORTED, digest, page_image
 from .pipeline import document_dict, enqueue, loop
@@ -32,6 +33,8 @@ from .report_context import extract_report_context
 from .fixtures import compare_fixture, fixture_inputs, list_fixtures, load_oracle
 from .fixture_batches import batch_dict
 from .auth import install_auth
+from .cost_tree import build_cost_tree
+from .workspace import asset_catalog, sync_assets, remove_unused_assets, copy_case_documents, case_package
 
 
 @asynccontextmanager
@@ -76,6 +79,11 @@ class NewCase(Context):
 
 class ClearCases(BaseModel):
     case_ids: list[UUID] = Field(min_length=1, max_length=100)
+    delete_unlinked_documents: bool = True
+
+
+class CopyCase(NewCase):
+    document_ids: list[UUID] = Field(default_factory=list, max_length=100)
 
 
 class Correction(BaseModel):
@@ -108,8 +116,12 @@ def writable(case):
 
 
 def case_dict(case):
+    def timestamp(value):
+        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat() if value else None
     return {'id': case.id, 'title': case.title, 'context': case.context, 'status': case.status,
-            'created_at': case.created_at.isoformat(), 'active_run_id': case.active_run_id}
+            'status_changed_at': timestamp(case.status_changed_at),
+            'check_type': 'Сверка затрат по первичным документам', 'user': 'Общий доступ',
+            'created_at': timestamp(case.created_at), 'active_run_id': case.active_run_id}
 
 
 @app.get('/api/health')
@@ -154,6 +166,10 @@ def clear_cases(body: ClearCases):
                 if batch.active_key:
                     raise HTTPException(409, 'Дождитесь завершения проверки всего каталога тестовых кейсов.')
         directories = []
+        case_documents = session.scalars(select(Document).where(Document.case_id.in_(ids))).all()
+        document_hashes = {doc.sha256 for doc in case_documents}
+        if not body.delete_unlinked_documents:
+            sync_assets(session, case_documents)
         for case_id in ids:
             directory = DATA / case_id
             if directory.is_symlink() or directory.resolve().parent != DATA.resolve():
@@ -163,6 +179,9 @@ def clear_cases(body: ClearCases):
         for model in (Review, Run, Document):
             session.execute(delete(model).where(model.case_id.in_(ids)))
         session.execute(delete(Case).where(Case.id.in_(ids)))
+        session.flush()
+        if body.delete_unlinked_documents:
+            remove_unused_assets(session, document_hashes)
     cleanup_failed = []
     for case_id, directory in directories:
         try:
@@ -172,6 +191,65 @@ def clear_cases(body: ClearCases):
             logging.getLogger(__name__).exception('Could not remove files for deleted case %s', case_id)
             cleanup_failed.append(case_id)
     return {'deleted_ids': ids, 'cleanup_failed': cleanup_failed}
+
+
+@app.get('/api/documents')
+def list_workspace_documents():
+    with Session.begin() as session:
+        return asset_catalog(session)
+
+
+@app.delete('/api/documents/unlinked')
+def delete_unlinked_documents():
+    with Session.begin() as session:
+        if session.get_bind().dialect.name == 'sqlite':
+            session.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        return {'deleted_ids': remove_unused_assets(session)}
+
+
+@app.get('/api/documents/{document_id}/original')
+def workspace_document_original(document_id: str):
+    with Session() as session:
+        asset = session.get(DocumentAsset, document_id)
+        if not asset or not Path(asset.path).is_file():
+            raise HTTPException(404, 'Оригинал документа недоступен')
+        return FileResponse(asset.path, filename=asset.name)
+
+
+@app.post('/api/cases/{case_id}/copy', status_code=201)
+def copy_case(case_id: str, body: CopyCase):
+    created_directory = None
+    try:
+        with Session.begin() as session:
+            source = get_case(session, case_id)
+            writable(source)
+            context = body.model_dump(mode='json', exclude={'title', 'document_ids'})
+            context.update(row_label=f'{body.stage} этап, {body.period_start.year} г.', copied_from=case_id)
+            target = Case(title=body.title, context=context)
+            session.add(target)
+            session.flush()
+            created_directory = DATA/target.id
+            copy_case_documents(session, source, target, [str(value) for value in body.document_ids])
+            return case_dict(target)
+    except Exception:
+        if created_directory and created_directory.resolve().parent == DATA.resolve() and not created_directory.is_symlink():
+            shutil.rmtree(created_directory, ignore_errors=True)
+        raise
+
+
+@app.get('/api/cases/{case_id}/package.zip')
+def download_case_package(case_id: str):
+    with Session() as session:
+        case = get_case(session, case_id)
+        writable(case)
+        docs = session.scalars(select(Document).where(Document.case_id == case_id)).all()
+        run = session.get(Run, case.active_run_id) if case.active_run_id else None
+        payload = run.payload if run else None
+        if payload is None:
+            raise HTTPException(409, 'Сначала завершите сверку: пакет должен содержать готовый отчёт.')
+        content = case_package(case, docs, payload, build_cost_tree(case.context, payload))
+        return FileResponse(content, media_type='application/zip', filename=f'sverka-{case.id}.zip',
+                            background=BackgroundTask(content.unlink, missing_ok=True))
 
 
 @app.post('/api/reports/context')
@@ -209,7 +287,7 @@ def read_case(case_id: str):
         comparison = compare_fixture(case.context['fixture_id'], result) if case.context.get('fixture_id') and result else None
         return {**case_dict(case), 'documents': [document_dict(d) for d in docs],
                 'runs': [{'id': r.id, 'created_at': r.created_at.isoformat(), 'status': r.status, 'progress': r.progress, 'message': r.message} for r in runs],
-                'result': result, 'fixture_comparison': comparison,
+                'result': result, 'fixture_comparison': comparison, 'cost_tree': build_cost_tree(case.context, result),
                 'reviews': [{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'before': r.before, 'reason': r.reason, 'created_at': r.created_at.isoformat()} for r in reviews]}
 
 
