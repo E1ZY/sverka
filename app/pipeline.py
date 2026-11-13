@@ -8,7 +8,7 @@ from sqlalchemy import or_, select
 from .config import PIPELINE_VERSION
 from .db import Case, Document, Review, Run, Session, engine, init_db, now
 from .domain import RULES, reconcile
-from .extractors import extract_primary, extract_report
+from .extractors import REPORT_PARSER_VERSION, extract_primary, extract_report
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ def process(run_id):
                 run.lease_until = now() + timedelta(minutes=10)
                 session.commit()
                 key = (doc.sha256, doc.role)
-                if doc.extraction is None:
+                if doc.extraction is None or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION):
                     try:
                         fact = cache.get(key)
                         if fact is None:

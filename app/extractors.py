@@ -17,6 +17,7 @@ from . import ocr
 from .domain import RULES, classify, money
 
 SUPPORTED = {'.pdf', '.docx', '.xlsx', '.png', '.jpg', '.jpeg'}
+REPORT_PARSER_VERSION = 'kfz-grid-v2'
 MONTHS = ['январ', 'феврал', 'март', 'апрел', 'ма', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр']
 CONTRACT = re.compile(r'\b\d{2}\s*/\s*\d{2}\s*/\s*\d{2}\s*[-–—]\s*\d{2}\b')
 AMOUNT = re.compile(r'(?<![\d/])[-−]?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)[,.]\d{2}(?!\d)')
@@ -260,7 +261,7 @@ def extract_report(path, context):
     data = metadata(header_fragments)
     data.update(report_values=values, report_evidence=evidence, row_label=context['row_label'],
                 needs_review=any(v is None for v in values.values()) or min(confidences) < 45,
-                parser='kfz-grid-v1', fragments=list(evidence.values()))
+                parser=REPORT_PARSER_VERSION, fragments=list(evidence.values()))
     return data
 
 

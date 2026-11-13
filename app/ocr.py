@@ -39,7 +39,10 @@ def words(image: Image.Image, psm=6, numeric=False):
     import pytesseract
     if os.getenv('TESSERACT_CMD'):
         pytesseract.pytesseract.tesseract_cmd = os.environ['TESSERACT_CMD']
-    config = f'--psm {psm}' + (' -c tessedit_char_whitelist=0123456789.,-' if numeric else '')
+    # Grouped amounts contain spaces. A CLI allowlist without spaces merges
+    # the groups and can return confidence 0 even for a correctly read amount.
+    # The report parser validates the numeric format after recognition.
+    config = f'--psm {psm}'
     data = pytesseract.image_to_data(image, lang=lang, config=config, output_type=pytesseract.Output.DICT, timeout=90)
     return [{'text': t, 'bbox': [data['left'][i], data['top'][i], data['left'][i] + data['width'][i], data['top'][i] + data['height'][i]],
              'confidence': float(data['conf'][i]), 'line': f"{data['block_num'][i]}.{data['par_num'][i]}.{data['line_num'][i]}"}
