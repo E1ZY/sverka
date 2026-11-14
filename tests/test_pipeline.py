@@ -50,3 +50,29 @@ def test_recalculate_refreshes_outdated_report_but_keeps_current_review_gate(
         report_extractor.assert_not_called()
         assert all(metric['status'] == 'INSUFFICIENT_DATA' for metric in metrics)
         assert all(metric['expected'] is None for metric in metrics)
+
+
+def test_changing_ocr_provider_reextracts_inputs_and_preserves_previous_run(client, baseline, monkeypatch):
+    demo = client.post('/api/demo').json()
+    facts = {doc['name']: deepcopy(doc['extraction']) for doc in baseline['result']['documents']}
+    with Session.begin() as session:
+        for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id'])):
+            doc.extraction = {**facts[doc.name], 'ocr_signature': 'tesseract-v1'}
+    before = deepcopy(client.get('/api/cases/'+baseline['id']).json()['result'])
+    report = Mock(side_effect=lambda path, context: deepcopy(next(doc['extraction'] for doc in baseline['result']['documents'] if doc['role'] == 'report')))
+    # Uploaded paths use generated names: resolve them through the document table.
+    with Session() as session:
+        paths = {doc.path: facts[doc.name] for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id']))}
+    primary = Mock(side_effect=lambda path: deepcopy(paths[path]))
+    monkeypatch.setattr(pipeline.ocr, 'signature', lambda: 'xiaomi-test-revision')
+    monkeypatch.setattr(pipeline, 'extract_report', report)
+    monkeypatch.setattr(pipeline, 'extract_primary', primary)
+    run_id = pipeline.claim()
+    assert run_id == demo['run_id']
+    pipeline.process(run_id)
+    case = client.get('/api/cases/'+demo['case_id']).json()
+    assert case['status'] == 'completed'
+    report.assert_called_once()
+    assert primary.call_count == len({doc['sha256'] for doc in case['documents'] if doc['role'] == 'primary'})
+    assert all(doc['extraction']['ocr_signature'] == 'xiaomi-test-revision' for doc in case['documents'])
+    assert client.get('/api/cases/'+baseline['id']).json()['result'] == before

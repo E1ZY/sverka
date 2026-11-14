@@ -10,6 +10,7 @@ from .db import Case, Document, Review, Run, Session, engine, init_db, now
 from .domain import RULES, reconcile
 from .extractors import REPORT_PARSER_VERSION, extract_primary, extract_report
 from .document_validation import validation_log
+from . import ocr
 
 log = logging.getLogger(__name__)
 
@@ -57,17 +58,19 @@ def process(run_id):
             docs = session.scalars(select(Document).where(Document.case_id == case.id).order_by(Document.name, Document.id)).all()
             reviews = copy.deepcopy(run.review_snapshot)
             cache = {}
+            ocr_signature = ocr.signature()
             for i, doc in enumerate(docs):
                 run.message = f'Извлечение {i+1}/{len(docs)}: {doc.name}'
                 run.progress = int(i / max(1, len(docs)) * 85)
                 run.lease_until = now() + timedelta(minutes=10)
                 session.commit()
                 key = (doc.sha256, doc.role)
-                if doc.extraction is None or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION) or (doc.role == 'primary' and 'business_metadata' not in doc.extraction):
+                if doc.extraction is None or doc.extraction.get('ocr_signature', 'tesseract-v1') != ocr_signature or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION) or (doc.role == 'primary' and 'business_metadata' not in doc.extraction):
                     try:
                         fact = cache.get(key)
                         if fact is None:
                             fact = extract_report(doc.path, context) if doc.role == 'report' else extract_primary(doc.path)
+                            fact['ocr_signature'] = ocr_signature
                         doc.extraction = fact
                         cache[key] = fact
                         doc.error = None
@@ -86,7 +89,7 @@ def process(run_id):
                     doc['extraction'].update(needs_review=False, reviewed=True)
             result = reconcile(context, snapshot)
             result['document_validation'] = validation_log(context, result)
-            result.update(context=context, pipeline_version=PIPELINE_VERSION, rules_version=RULES['version'], reviews=reviews,
+            result.update(context=context, pipeline_version=PIPELINE_VERSION, rules_version=RULES['version'], ocr=ocr.provenance(), reviews=reviews,
                           created_at=now().isoformat(), run_id=run.id)
             run.payload = result
             run.status, run.progress, run.message, run.lease_until = 'completed', 100, 'Сверка завершена', None

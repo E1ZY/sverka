@@ -11,6 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr t
 WORKDIR /app
 COPY requirements.txt constraints.txt ./
 RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
+ARG INSTALL_XIAOMI_OCR=false
+ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+COPY requirements-xiaomi-ocr.txt ./
+RUN if [ "$INSTALL_XIAOMI_OCR" = "true" ]; then \
+    pip install --no-cache-dir torch==2.14.0 torchvision==0.29.0 --index-url "$PYTORCH_INDEX_URL" -c constraints.txt && \
+    pip install --no-cache-dir -r requirements-xiaomi-ocr.txt -c constraints.txt; fi
 COPY app/ app/
 COPY demo/manifest.json demo/manifest.json
 COPY demo/expected.json demo/expected.json

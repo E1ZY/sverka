@@ -10,6 +10,7 @@ temp = Path(tempfile.mkdtemp(prefix='audit-tests-', dir=ROOT/'.runtime'))
 os.environ['DATA_DIR'] = str(temp)
 os.environ['DATABASE_URL'] = f'sqlite:///{(temp/"test.db").as_posix()}'
 os.environ['EMBED_WORKER'] = 'false'
+os.environ['OCR_PROVIDER'] = 'tesseract'
 from app.auth_passwords import password_hash
 TEST_PASSWORD = 'test-workspace-password'
 os.environ['AUTH_PASSWORD_HASH'] = password_hash(TEST_PASSWORD)

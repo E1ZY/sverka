@@ -37,6 +37,13 @@ def test_contract_formats_and_repeated_identical_values():
     assert result['stage'] == {'value': 3, 'status': 'found'}
 
 
+def test_mixed_script_stage_label_does_not_infer_period_or_override_confidence():
+    result = fields('3 3ran, 2026 r.', confidence=95)
+    assert result['stage'] == {'value': 3, 'status': 'found'}
+    assert result['period_start']['value'] is None and result['period_end']['value'] is None
+    assert fields('3 tran, 2026 r.', confidence=30)['stage']['value'] is None
+
+
 def test_multiple_distinct_candidates_leave_fields_empty():
     result = fields('Договор № 24/03/15-01\nДоговор № 26/01/01-77\n2 этап\n3 этап\n'
                     'Период: январь - май 2026\nПериод: февраль - июнь 2026')
@@ -115,6 +122,23 @@ def test_preview_reads_real_pdf_without_creating_case_or_keeping_upload(client):
     assert result['period_end']['value'] == '2026-01-31'
     assert client.get('/api/cases').json() == before_cases
     assert set(DATA.iterdir()) == before_files
+
+
+def test_preview_recognizer_runs_outside_the_api_event_loop(client, monkeypatch):
+    import asyncio
+    outside_loop = []
+    def recognize(path):
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            outside_loop.append(True)
+        else:
+            outside_loop.append(False)
+        return {'fields': {}}
+    monkeypatch.setattr('app.main.extract_report_context', recognize)
+    response = client.post('/api/reports/context', files={'file': ('report.pdf', b'test input')})
+    assert response.status_code == 200
+    assert outside_loop == [True]
 
 
 def test_original_scanned_kfz_suggests_contract_but_requires_scope_selection(client):

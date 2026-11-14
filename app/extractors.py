@@ -2,6 +2,7 @@ import calendar
 import hashlib
 import io
 import re
+from functools import lru_cache
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -16,9 +17,10 @@ from PIL import Image, ImageOps
 from . import ocr
 from .card_metadata import card_metadata
 from .domain import RULES, classify, money
+from .ocr_labels import stage_candidates
 
 SUPPORTED = {'.pdf', '.docx', '.xlsx', '.png', '.jpg', '.jpeg'}
-REPORT_PARSER_VERSION = 'kfz-grid-v3-tree'
+REPORT_PARSER_VERSION = 'kfz-grid-v4-ocr'
 MONTHS = ['январ', 'феврал', 'март', 'апрел', 'ма', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр']
 CONTRACT = re.compile(r'\b\d{2}\s*/\s*\d{2}\s*/\s*\d{2}\s*[-–—]\s*\d{2}\b')
 AMOUNT = re.compile(r'(?<![\d/])[-−]?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)[,.]\d{2}(?!\d)')
@@ -51,7 +53,10 @@ def image_fragments(image, page):
         box = [min(t['bbox'][0] for t in line), min(t['bbox'][1] for t in line), max(t['bbox'][2] for t in line), max(t['bbox'][3] for t in line)]
         result.append(fragment(' '.join(t['text'] for t in line), page=page,
                                bbox=[box[0] / w, box[1] / h, box[2] / w, box[3] / h],
-                               confidence=round(sum(t['confidence'] for t in line) / len(line), 1)))
+                               confidence=round(sum(t['confidence'] for t in line) / len(line), 1),
+                               ocr_provider=line[0].get('provider', 'tesseract'),
+                               confidence_basis=line[0].get('confidence_basis', 'ocr'),
+                               bbox_precision='region' if any(t.get('bbox_precision') == 'region' for t in line) else 'word'))
     return result
 
 
@@ -228,11 +233,14 @@ def extract_report(path, context):
         label_image = ImageOps.expand(label_image.resize((label_image.width*5, label_image.height*5), Image.Resampling.LANCZOS), border=15, fill='white')
         label = ocr.text(label_image, psm=7)
         labels.append(label)
-        stage_match = re.search(r'\b(\d+)\s*[эе]?тап', label, re.I)
+        stages = {value for value, _ in stage_candidates(label)}
+        if len(stages) > 1:
+            raise ValueError('Неоднозначный этап в строке КФЗ: ' + label)
+        detected_stage = next(iter(stages), None)
         year_match = re.search(r'20\d{2}', label)
-        if stage_match:
-            recognized_rows.append({'stage': int(stage_match[1]), 'year': int(year_match[0]) if year_match else None, 'bounds': (y0, y1)})
-        if year in label and re.search(rf'\b{context["stage"]}\s*[эе]?тап', label, re.I):
+        if detected_stage is not None:
+            recognized_rows.append({'stage': detected_stage, 'year': int(year_match[0]) if year_match else None, 'bounds': (y0, y1)})
+        if year_match and year_match[0] == year and detected_stage == context['stage']:
             if row is not None:
                 raise ValueError('Найдено несколько строк с выбранными этапом и годом')
             row = (y0, y1)
@@ -240,6 +248,7 @@ def extract_report(path, context):
         raise ValueError('Не найдена строка этапа и года: ' + ' | '.join(labels))
     values, evidence, confidences = {}, {}, []
     y0, y1 = row
+    @lru_cache(maxsize=128)
     def read_cell(column, y0, y1):
         x0, x1 = xs[column-1], xs[column]
         candidates = []

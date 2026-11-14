@@ -13,13 +13,22 @@ services:
       timeout: 3s
       retries: 15
   api:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_XIAOMI_OCR: ${INSTALL_XIAOMI_OCR:-false}
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cpu}
     image: reconciliation-mvp:local
     environment:
       <<: &app-env
         DATABASE_URL: postgresql+psycopg://audit:${POSTGRES_PASSWORD:-local-audit-password}@db:5432/reconciliation
         DATA_DIR: /data
         EMBED_WORKER: "false"
+        OCR_PROVIDER: ${OCR_PROVIDER:-tesseract}
+        XIAOMI_OCR_MODEL: /models/xiaomi-ocr-0
+        XIAOMI_OCR_DEVICE: ${XIAOMI_OCR_DEVICE:-cpu}
+        XIAOMI_OCR_MAX_NEW_TOKENS: ${XIAOMI_OCR_MAX_NEW_TOKENS:-4096}
+        XIAOMI_OCR_TIMEOUT: ${XIAOMI_OCR_TIMEOUT:-180}
       AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:-}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       AUTH_MODE: ${AUTH_MODE:-password}
@@ -30,6 +39,7 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
     volumes:
       - documents:/data
+      - ./.runtime/models:/models:ro
     depends_on:
       db:
         condition: service_healthy
@@ -44,6 +54,7 @@ services:
     environment: *app-env
     volumes:
       - documents:/data
+      - ./.runtime/models:/models:ro
     depends_on:
       api:
         condition: service_healthy

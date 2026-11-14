@@ -12,6 +12,7 @@ from PIL import ImageOps
 
 from . import ocr
 from .extractors import CONTRACT, clusters, page_image
+from .ocr_labels import stage_candidates
 
 FIELDS = ('contract', 'stage', 'period_start', 'period_end')
 DATE = r'(?:\d{2}[./-]\d{2}[./-]\d{4}|\d{4}-\d{2}-\d{2})'
@@ -88,6 +89,8 @@ def context_from_fragments(fragments):
             value = int(match['value'])
             if 1 <= value <= 100:
                 add('stage', value, match.span('value'))
+    for value, span in stage_candidates(text):
+        add('stage', value, span)
 
     for match in PERIOD.finditer(text):
         try:
