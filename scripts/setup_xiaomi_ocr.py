@@ -11,6 +11,18 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from app.ocr_settings import MODEL_ID, MODEL_REVISION, OCRSettings
 
+MODEL_FILES = ('config.json', 'model.safetensors', 'processor_config.json',
+               'tokenizer.json', 'tokenizer_config.json', 'chat_template.jinja')
+
+
+def prepared_model(model_dir):
+    try:
+        manifest = json.loads((model_dir/'sverka-model.json').read_text(encoding='utf-8'))
+        return (manifest.get('model') == MODEL_ID and manifest.get('revision') == MODEL_REVISION
+                and all((model_dir/name).is_file() and (model_dir/name).stat().st_size > 0 for name in MODEL_FILES))
+    except (OSError, ValueError):
+        return False
+
 
 def save_provider(path, values):
     lines = path.read_text(encoding='utf-8-sig').splitlines() if path.exists() else []
@@ -44,8 +56,15 @@ def main(argv=None):
     parser.add_argument('--model-dir', type=Path, default=ROOT / '.runtime/models/xiaomi-ocr-0')
     parser.add_argument('--env-file', type=Path, default=ROOT / '.env')
     parser.add_argument('--download-only', action='store_true', help='Только подготовить веса; не запускать модель и не менять .env.')
+    parser.add_argument('--if-missing', action='store_true', help='С --download-only: сохранить уже подготовленную закреплённую версию без сетевого запроса.')
     parser.add_argument('--disable', action='store_true', help='Вернуть Tesseract, сохранив веса Xiaomi.')
     args = parser.parse_args(argv)
+    if args.if_missing and not args.download_only:
+        parser.error('--if-missing используется только с --download-only.')
+    model_dir = args.model_dir.resolve()
+    if args.if_missing and prepared_model(model_dir):
+        print(f'Xiaomi-OCR-0 уже подготовлена: {model_dir}. Повторное скачивание не требуется.', flush=True)
+        return
     if args.disable:
         save_provider(args.env_file.resolve(), {'OCR_PROVIDER': 'tesseract'})
         print('Выбран Tesseract. Перезапустите приложение.')
@@ -54,7 +73,6 @@ def main(argv=None):
         from huggingface_hub import snapshot_download
     except ImportError:
         parser.error('Сначала установите requirements-xiaomi-ocr.txt по README.')
-    model_dir = args.model_dir.resolve()
     print(f'Подготовка {MODEL_ID}, revision {MODEL_REVISION}. Веса: {model_dir}', flush=True)
     snapshot_download(repo_id=MODEL_ID, revision=MODEL_REVISION, local_dir=model_dir,
                       allow_patterns=['*.json', '*.safetensors', '*.jinja', '*.txt', '*.model'])

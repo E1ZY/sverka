@@ -92,6 +92,26 @@ def test_missing_model_has_actionable_setup_error(tmp_path):
         xiaomi_ocr._load(str(tmp_path), 'cpu')
 
 
+@pytest.mark.parametrize(('available', 'requested', 'selected'), [(True, 'auto', 'cuda'), (False, 'auto', 'cpu'), (True, 'cpu', 'cpu')])
+def test_auto_load_selects_gpu_or_cpu_without_changing_the_model(tmp_path, monkeypatch, available, requested, selected):
+    (tmp_path/'model.safetensors').write_bytes(b'weights')
+    loaded = []
+    model = SimpleNamespace(to=lambda device: loaded.append(device) or model, eval=lambda: model)
+    torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: available),
+                            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
+                            float32='fp32', float16='fp16')
+    monkeypatch.setitem(sys.modules, 'torch', torch)
+    monkeypatch.setitem(sys.modules, 'transformers', SimpleNamespace(
+        AutoProcessor=SimpleNamespace(from_pretrained=lambda *a, **k: 'processor'),
+        AutoModelForImageTextToText=SimpleNamespace(from_pretrained=lambda *a, **k: model)))
+    xiaomi_ocr._load.cache_clear()
+    try:
+        assert xiaomi_ocr._load(str(tmp_path), requested)[3] == selected
+        assert loaded == [selected]
+    finally:
+        xiaomi_ocr._load.cache_clear()
+
+
 def test_truncated_model_output_is_rejected(monkeypatch):
     class Inputs(dict):
         def __init__(self):
