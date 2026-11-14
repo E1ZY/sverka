@@ -5,6 +5,19 @@ $pythonExecutable = Join-Path $projectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonExecutable)) {
     throw 'Сначала создайте .venv и установите зависимости по README.md'
 }
+
+# Choose access on first installation; keep the existing selection on later runs.
+try {
+    # PowerShell 5.1 must forward the whole argparse error, including the remedy.
+    $ErrorActionPreference = 'Continue'
+    & $pythonExecutable (Join-Path $PSScriptRoot 'configure_auth.py') --ensure --http
+} finally {
+    $ErrorActionPreference = 'Stop'
+}
+if ($LASTEXITCODE -ne 0) {
+    throw 'Не удалось настроить режим доступа. Следуйте подсказке выше и повторите запуск.'
+}
+
 $frontendRoot = Join-Path $projectRoot 'frontend'
 $outputRoot = Join-Path $frontendRoot 'dist'
 $indexPath = Join-Path $outputRoot 'index.html'

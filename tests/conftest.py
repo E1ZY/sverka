@@ -14,6 +14,7 @@ from app.auth_passwords import password_hash
 TEST_PASSWORD = 'test-workspace-password'
 os.environ['AUTH_PASSWORD_HASH'] = password_hash(TEST_PASSWORD)
 os.environ['AUTH_COOKIE_SECURE'] = 'false'
+os.environ['AUTH_MODE'] = 'password'
 
 from fastapi.testclient import TestClient
 from app.main import app

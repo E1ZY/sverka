@@ -3,9 +3,9 @@ import { ArrowRight, Eye, EyeOff, Layers3, Loader2, LockKeyhole } from "lucide-r
 import { AUTH_REQUIRED, authFetch, setCsrfToken } from "./auth";
 import "./auth.css";
 
-type Session = { configured: boolean; authenticated: boolean; csrf_token: string | null };
+type Session = { configured: boolean; authenticated: boolean; csrf_token: string | null; mode?: "local" | "password" };
 
-export function AuthGate({ children }: { children: (logout: () => Promise<void>) => ReactNode }) {
+export function AuthGate({ children }: { children: (logout: (() => Promise<void>) | null) => ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [password, setPassword] = useState("");
   const [visible, setVisible] = useState(false);
@@ -84,7 +84,7 @@ export function AuthGate({ children }: { children: (logout: () => Promise<void>)
     setVisible(false);
   }
 
-  if (session?.authenticated) return children(logout);
+  if (session?.authenticated) return children(session.mode === "local" ? null : logout);
 
   return <div className="auth-page">
     <div className="auth-brand"><Layers3 size={27} aria-hidden="true" /><span>сверка</span></div>
@@ -93,7 +93,7 @@ export function AuthGate({ children }: { children: (logout: () => Promise<void>)
       <h1 id="auth-title">Вход в рабочее пространство</h1>
       {loading ? <p className="auth-status" role="status"><Loader2 size={18} className="spin" /> Проверяем вход…</p>
         : !session ? <><p role="alert" className="form-error">{error}</p><button className="button full" onClick={() => window.location.reload()}>Повторить попытку</button></>
-        : !session.configured ? <p className="auth-description">Доступ к приложению ещё не настроен. Обратитесь к администратору.</p>
+        : !session.configured ? <p className="auth-description">Режим доступа ещё не выбран. В терминале проекта запустите <code>python scripts/configure_auth.py --http</code>, выберите режим и перезапустите приложение. Подробности — в README, раздел «Вход и доступ к приложению».</p>
         : <>
           <p className="auth-description">Введите пароль доступа, чтобы работать с документами и проверками.</p>
           <form onSubmit={login} className="auth-form">
