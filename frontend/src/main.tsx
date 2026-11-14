@@ -250,7 +250,7 @@ function Badge({ status }: { status: string }) {
   );
 }
 
-function App({ onLogout }: { onLogout: () => Promise<void> }) {
+function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
   const [cases, setCases] = useState<Case[]>([]),
     [selected, setSelected] = useState<string | null>(
       localStorage.getItem("active-case"),
@@ -590,7 +590,7 @@ function App({ onLogout }: { onLogout: () => Promise<void> }) {
                 : "Рабочее пространство"}
             </strong>
           </div>
-          <button className="button auth-logout" disabled={busy} onClick={() => action(onLogout)}><LogOut size={15} />Выйти</button>
+          {onLogout && <button className="button auth-logout" disabled={busy} onClick={() => action(onLogout)}><LogOut size={15} />Выйти</button>}
         </header>
         <nav className="workspace-mobile-nav" aria-label="Основные разделы">
           <button className={!workspaceDocuments ? 'active' : ''} onClick={overview}>Сверки</button>

@@ -70,7 +70,7 @@ def test_unconfigured_installation_keeps_data_closed(workspace):
     auth.install_auth(application, auth.AuthSettings())
     with TestClient(application) as browser:
         assert browser.get('/api/auth/session').json() == {
-            'configured': False, 'authenticated': False, 'csrf_token': None}
+            'configured': False, 'authenticated': False, 'csrf_token': None, 'mode': 'password'}
         assert browser.get('/api/private').status_code == 503
         assert login(browser).status_code == 503
 

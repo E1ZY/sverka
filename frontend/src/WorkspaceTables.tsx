@@ -136,7 +136,7 @@ export function ChecksTable({
                     {statuses[item.status] || item.status}
                   </span>
                 </td>
-                <td title="В приложении используется общий пароль рабочего пространства">
+                <td title="Все проверки доступны в общем рабочем пространстве">
                   {item.user || "Общий доступ"}
                 </td>
                 <td>

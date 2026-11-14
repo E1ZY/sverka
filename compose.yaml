@@ -22,6 +22,10 @@ services:
         EMBED_WORKER: "false"
       AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:-}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
+      AUTH_MODE: ${AUTH_MODE:-password}
+      BIND_ADDRESS: ${BIND_ADDRESS:-127.0.0.1}
+      # Docker forwards localhost connections through its private bridge.
+      AUTH_LOCAL_PROXY: "true"
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
     volumes:

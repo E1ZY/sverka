@@ -1,15 +1,14 @@
 """Shared workspace login. Sessions are opaque, revocable and stored as hashes."""
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
-import os
 import re
 import secrets
 import threading
 import time
 from collections import OrderedDict, deque
-from dataclasses import dataclass
 from datetime import timedelta, timezone
 
 from fastapi import FastAPI, Request
@@ -18,8 +17,8 @@ from sqlalchemy import delete
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import Headers
 
-from .auth_passwords import parse_hash, verify_password
-from .config import ROOT
+from .auth_config import AuthSettings, is_loopback
+from .auth_passwords import verify_password
 from .db import AuthSession, Session, now
 
 SESSION_SECONDS = 12 * 60 * 60
@@ -27,32 +26,6 @@ COOKIE_NAME = 'sverka_session'
 TOKEN = re.compile(r'[A-Za-z0-9_-]{43}\Z')
 SAFE_METHODS = {'GET', 'HEAD', 'OPTIONS'}
 PUBLIC_PATHS = {'/', '/index.html', '/api/health', '/api/auth/session', '/api/auth/login'}
-
-
-@dataclass(frozen=True)
-class AuthSettings:
-    password_hash: str = ''
-    cookie_secure: bool = True
-
-    def __post_init__(self):
-        if self.password_hash:
-            parse_hash(self.password_hash)
-
-    @classmethod
-    def from_env(cls):
-        # Direct Python execution also understands the two values written by
-        # configure_auth.py. Compose supplies these as environment variables.
-        values = {}
-        path = ROOT / '.env'
-        if path.is_file():
-            for line in path.read_text(encoding='utf-8-sig').splitlines():
-                key, sep, value = line.partition('=')
-                if sep and key.strip() in {'AUTH_PASSWORD_HASH', 'AUTH_COOKIE_SECURE'}:
-                    values[key.strip()] = value.strip().strip('\"\'')
-        secure = os.getenv('AUTH_COOKIE_SECURE', values.get('AUTH_COOKIE_SECURE', 'true')).lower()
-        if secure not in {'true', 'false'}:
-            raise ValueError('AUTH_COOKIE_SECURE должен быть true или false.')
-        return cls(os.getenv('AUTH_PASSWORD_HASH', values.get('AUTH_PASSWORD_HASH', '')), secure == 'true')
 
 
 class LoginLimiter:
@@ -94,7 +67,7 @@ class AuthService:
         self.limiter = LoginLimiter()
 
     def authenticate(self, token):
-        if not self.settings.password_hash or not token or not TOKEN.fullmatch(token):
+        if self.settings.mode == 'local' or not self.settings.password_hash or not token or not TOKEN.fullmatch(token):
             return None
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         with Session() as session:
@@ -148,7 +121,25 @@ class AuthMiddleware:
                 message = {**message, 'headers': headers}
             await send(message)
 
-        if not public:
+        if self.service.settings.mode == 'local' and path != '/api/health':
+            # Host checks prevent DNS rebinding; peer checks also prevent direct
+            # access after an accidental --host 0.0.0.0. Docker explicitly opts
+            # into bridge peers while publishing its port on loopback only.
+            peer = request.client.host if request.client else ''
+            allowed_peer = is_loopback(peer)
+            if not allowed_peer and self.service.settings.local_proxy:
+                try:
+                    allowed_peer = ipaddress.ip_address(peer).is_private
+                except ValueError:
+                    pass
+            if not is_loopback(request.url.hostname or '') or not allowed_peer:
+                return await JSONResponse({'detail': 'Локальный режим доступен только через localhost.'}, status_code=403)(scope, receive, protected_send)
+            if scope['method'] not in SAFE_METHODS:
+                origin = request.headers.get('origin')
+                expected_origin = f'{request.url.scheme}://{request.url.netloc}'
+                if request.headers.get('x-sverka-request') != '1' or (origin and origin != expected_origin):
+                    return await JSONResponse({'detail': 'Откройте приложение на localhost и повторите действие.'}, status_code=403)(scope, receive, protected_send)
+        elif not public:
             if not self.service.settings.password_hash:
                 return await JSONResponse({'detail': 'Вход в приложение ещё не настроен.'}, status_code=503)(scope, receive, protected_send)
             identity = await run_in_threadpool(self.service.authenticate, request.cookies.get(COOKIE_NAME))
@@ -169,12 +160,16 @@ def install_auth(app: FastAPI, settings=None):
 
     @app.get('/api/auth/session')
     def auth_session(request: Request):
+        if service.settings.mode == 'local':
+            return {'configured': True, 'authenticated': True, 'csrf_token': None, 'mode': 'local'}
         identity = service.authenticate(request.cookies.get(COOKIE_NAME))
         return {'configured': bool(service.settings.password_hash), 'authenticated': identity is not None,
-                'csrf_token': identity.csrf_token if identity else None}
+                'csrf_token': identity.csrf_token if identity else None, 'mode': 'password'}
 
     @app.post('/api/auth/login')
     async def login(request: Request):
+        if service.settings.mode == 'local':
+            return {'authenticated': True, 'csrf_token': None, 'mode': 'local'}
         if not service.settings.password_hash:
             return JSONResponse({'detail': 'Вход в приложение ещё не настроен.'}, status_code=503)
         # Custom header + JSON prevents cross-origin forms from logging a user
@@ -209,8 +204,9 @@ def install_auth(app: FastAPI, settings=None):
 
     @app.post('/api/auth/logout')
     def logout(request: Request):
-        with Session.begin() as session:
-            session.execute(delete(AuthSession).where(AuthSession.token_hash == request.state.auth_session.token_hash))
-        response = JSONResponse({'authenticated': False})
+        if service.settings.mode == 'password':
+            with Session.begin() as session:
+                session.execute(delete(AuthSession).where(AuthSession.token_hash == request.state.auth_session.token_hash))
+        response = JSONResponse({'authenticated': service.settings.mode == 'local'})
         response.delete_cookie(COOKIE_NAME, path='/', secure=service.settings.cookie_secure, httponly=True, samesite='strict')
         return response

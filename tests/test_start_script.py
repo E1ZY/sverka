@@ -20,6 +20,12 @@ def project(tmp_path):
     folder = tmp_path/'проект с пробелами'
     (folder/'scripts').mkdir(parents=True)
     shutil.copyfile(ROOT/'scripts/start.ps1', folder/'scripts/start.ps1')
+    shutil.copyfile(ROOT/'scripts/configure_auth.py', folder/'scripts/configure_auth.py')
+    (folder/'app').mkdir()
+    (folder/'app/__init__.py').touch()
+    for name in ['auth_config.py', 'auth_passwords.py']:
+        shutil.copyfile(ROOT/'app'/name, folder/'app'/name)
+    (folder/'.env').write_text('AUTH_MODE=local\nBIND_ADDRESS=127.0.0.1\n', encoding='utf-8')
     subprocess.run(
         [sys.executable, '-m', 'venv', '--without-pip', str(folder/'.venv')],
         check=True, capture_output=True, timeout=30,
@@ -60,7 +66,8 @@ def project(tmp_path):
         'sys.exit(int(os.environ.get("SVERKA_SERVER_EXIT", "0")))\n',
         encoding='utf-8',
     )
-    env = dict(os.environ, PATH=str(tools), SVERKA_START_LOG=str(folder/'calls.log'))
+    env = dict(os.environ, PATH=str(tools), SVERKA_START_LOG=str(folder/'calls.log'), AUTH_MODE='local',
+               AUTH_PASSWORD_HASH='', BIND_ADDRESS='127.0.0.1', AUTH_LOCAL_PROXY='false')
     return folder, env
 
 
@@ -72,7 +79,7 @@ def run_start(project, **overrides):
         [str(POWERSHELL), '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
          str(folder/'scripts/start.ps1')],
         # The launcher must find its project even when called from another directory.
-        cwd=folder.parent, env=dict(env, **overrides), capture_output=True,
+        cwd=folder.parent, env=dict(env, **overrides), stdin=subprocess.DEVNULL, capture_output=True,
         text=True, encoding='utf-8', errors='replace', timeout=40,
     )
     calls = log.read_text(encoding='utf-8').splitlines() if log.exists() else []
@@ -93,6 +100,15 @@ def test_first_start_builds_and_unchanged_start_needs_no_npm(project):
     (folder/'frontend/tsconfig.tsbuildinfo').write_text('new compiler cache', encoding='utf-8')
     os.utime(folder/'frontend/src/main.tsx', (1, 1))
     assert_started(*run_start(project, PATH=str(folder/'no-npm')), build=False)
+
+
+def test_unconfigured_access_stops_before_build_without_interactive_terminal(project):
+    folder, _ = project
+    (folder/'.env').unlink()
+    result, calls = run_start(project, AUTH_MODE='password', AUTH_PASSWORD_HASH='')
+    assert result.returncode != 0
+    assert calls == []
+    assert '--mode local' in result.stderr, result.stderr
 
 
 @pytest.mark.parametrize('change', [
