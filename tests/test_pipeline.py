@@ -9,6 +9,34 @@ from app.db import Document, Session
 from app.extractors import REPORT_PARSER_VERSION
 
 
+def test_failed_report_refresh_discards_stale_values_and_can_be_retried(client, baseline, monkeypatch):
+    demo = client.post('/api/demo').json()
+    facts = {doc['name']: deepcopy(doc['extraction']) for doc in baseline['result']['documents']}
+    report_fact = deepcopy(next(doc['extraction'] for doc in baseline['result']['documents'] if doc['role'] == 'report'))
+    with Session.begin() as session:
+        for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id'])):
+            fact = facts[doc.name]
+            if doc.role == 'report':
+                fact['parser'] = 'outdated'
+            doc.extraction = fact
+    failed = Mock(side_effect=RuntimeError('OCR unavailable'))
+    monkeypatch.setattr(pipeline, 'extract_report', failed)
+    assert pipeline.claim() == demo['run_id']
+    pipeline.process(demo['run_id'])
+    case = client.get('/api/cases/' + demo['case_id']).json()
+    report = next(doc for doc in case['documents'] if doc['role'] == 'report')
+    assert report['extraction'] is None and report['error'] == 'OCR unavailable'
+    assert all(metric['actual'] is None and metric['status'] == 'INSUFFICIENT_DATA' for metric in case['result']['metrics'])
+    success = Mock(return_value=report_fact)
+    monkeypatch.setattr(pipeline, 'extract_report', success)
+    retry = client.post('/api/cases/' + demo['case_id'] + '/runs').json()
+    assert pipeline.claim() == retry['id']
+    pipeline.process(retry['id'])
+    recovered = client.get('/api/cases/' + demo['case_id']).json()
+    success.assert_called_once()
+    assert recovered['result']['metrics'][2]['delta'] == '12500.00'
+
+
 @pytest.mark.parametrize('cached_parser', ['kfz-grid-v1', REPORT_PARSER_VERSION])
 def test_recalculate_refreshes_outdated_report_but_keeps_current_review_gate(
         client, baseline, monkeypatch, cached_parser):

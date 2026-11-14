@@ -44,6 +44,7 @@ import { authFetch } from "./auth";
 import { CaseId } from "./CaseId";
 import { ChecksTable, DocumentsRegister } from "./WorkspaceTables";
 import { formatDuration } from "./duration";
+import { ReportValueEditor, type ReportExtraction } from "./ReportValueEditor";
 import type { TreeSnapshot } from "./CostTreePanel";
 import "./workspace.css";
 
@@ -61,7 +62,7 @@ type Evidence = {
   column?: number;
   confidence?: number;
 };
-type Fact = {
+type Fact = ReportExtraction & {
   article?: string;
   amount?: string;
   contract?: string;
@@ -940,6 +941,9 @@ function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
                   История
                 </button>
                 <div className="tab-actions">
+                  {report && <button className="text-button" disabled={running || busy} onClick={() => showSource(report.id)}>
+                    <SlidersHorizontal size={15} />Уточнить КФЗ
+                  </button>}
                   {result && (
                     <a
                       className="text-button"
@@ -1368,8 +1372,12 @@ function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
       )}
       {source && selected && (
         <SourcePanel
+          key={source.doc.id}
           source={source}
           caseId={selected}
+          stage={current?.context.stage || 1}
+          year={Number(current?.context.period_start.slice(0, 4))}
+          readOnly={running || busy}
           focusEvidence={!!example && (example.step === 3 || example.step === 4)}
           onClose={() => setSource(null)}
           onReviewed={async () => {
@@ -2304,12 +2312,16 @@ function NewCaseModal({
 function SourcePanel({
   source,
   caseId,
+  stage, year, readOnly,
   focusEvidence,
   onClose,
   onReviewed,
 }: {
   source: { doc: Doc; evidence?: Evidence };
   caseId: string;
+  stage: number;
+  year: number;
+  readOnly: boolean;
   focusEvidence: boolean;
   onClose: () => void;
   onReviewed: () => Promise<void>;
@@ -2320,6 +2332,7 @@ function SourcePanel({
     [saving, setSaving] = useState(false),
     [imageError, setImageError] = useState(false);
   const dialog = useDialog(onClose, saving);
+  const close = () => { if (!saving) onClose(); };
   const image = /\.(pdf|png|jpe?g)$/i.test(doc.name);
   const matchesEvidence = (fragment: Evidence) => !!(
     (ev?.range && fragment.sheet === ev.sheet && rangeContains(ev.range, fragment.range || "")) ||
@@ -2358,23 +2371,24 @@ function SourcePanel({
           ? `Абзац ${ev.paragraph}`
           : "Документ";
   return (
-    <div className="overlay source-overlay" onClick={onClose}>
+    <div className="overlay source-overlay" onClick={close}>
       <section
         className="source-panel"
         ref={dialog}
         role="dialog"
         aria-modal="true"
-        aria-label="Первичный документ"
+        aria-label={doc.role === "report" ? "Главный отчёт КФЗ" : "Первичный документ"}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="source-heading">
-          <button className="text-button" onClick={onClose}>
+          <button className="text-button" disabled={saving} onClick={close}>
             <ArrowLeft size={17} />К результатам
           </button>
           <button
             className="icon-button"
             aria-label="Закрыть документ"
-            onClick={onClose}
+            disabled={saving}
+            onClick={close}
           >
             <X />
           </button>
@@ -2430,6 +2444,12 @@ function SourcePanel({
             )}
           </div>
           <aside className="source-facts">
+            {doc.role === "report" ? <>
+              <h3>Значения главного отчёта</h3>
+              {doc.error && <p className="notice">Не удалось распознать КФЗ: {doc.error}. Сверьте суммы и договор с оригиналом.</p>}
+              <ReportValueEditor caseId={caseId} documentId={doc.id} fact={doc.extraction} stage={stage} year={year}
+                disabled={readOnly} saving={saving} onSaving={setSaving} onSaved={onReviewed} />
+            </> : <>
             <h3>Подтверждающий фрагмент</h3>
             {ev ? (
               <blockquote data-tutorial={!hasVisualEvidence ? "example-evidence" : undefined}>{ev.text}</blockquote>
@@ -2472,6 +2492,7 @@ function SourcePanel({
               <>
                 <button
                   className="button full"
+                  disabled={readOnly || saving}
                   onClick={() => setEditing(!editing)}
                 >
                   <SlidersHorizontal size={16} />
@@ -2527,6 +2548,7 @@ function SourcePanel({
                 )}
               </>
             )}
+            </>}
           </aside>
         </div>
       </section>

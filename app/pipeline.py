@@ -3,7 +3,7 @@ import logging
 import time
 from datetime import timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 
 from .config import PIPELINE_VERSION
 from .db import Case, Document, Review, Run, Session, engine, init_db, now
@@ -11,6 +11,7 @@ from .domain import RULES, reconcile
 from .extractors import REPORT_PARSER_VERSION, extract_primary, extract_report
 from .document_validation import validation_log
 from .timing import run_timing
+from .report_corrections import apply_document_changes
 from . import ocr
 
 log = logging.getLogger(__name__)
@@ -23,12 +24,17 @@ def document_dict(doc):
 def enqueue(session, case):
     if case.status in {'queued', 'running'}:
         raise ValueError('Проверка уже выполняется')
+    # The condition is checked by the database, including when two requests read
+    # the same completed case before either one has queued its new run.
+    reserved = session.execute(update(Case).where(Case.id == case.id, Case.status.not_in(['queued', 'running']))
+        .values(status='queued', status_changed_at=now())).rowcount
+    if reserved != 1:
+        raise ValueError('Проверка уже выполняется')
     reviews = session.scalars(select(Review).where(Review.case_id == case.id).order_by(Review.created_at, Review.id)).all()
     run = Run(case_id=case.id, review_snapshot=[{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'reason': r.reason} for r in reviews])
     session.add(run)
     session.flush()
     case.active_run_id = run.id
-    case.status = 'queued'
     return run
 
 
@@ -77,7 +83,7 @@ def process(run_id):
                     run.progress = max(run.progress, min(84, max(1, overall)))
                     run.lease_until = now() + timedelta(minutes=10)
                     session.commit()
-                if doc.extraction is None or doc.extraction.get('ocr_signature', 'tesseract-v1') != ocr_signature or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION) or (doc.role == 'primary' and 'business_metadata' not in doc.extraction):
+                if doc.error or doc.extraction is None or doc.extraction.get('ocr_signature', 'tesseract-v1') != ocr_signature or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION) or (doc.role == 'primary' and 'business_metadata' not in doc.extraction):
                     try:
                         fact = cache.get(key)
                         if fact is None:
@@ -88,6 +94,7 @@ def process(run_id):
                         doc.error = None
                     except Exception as e:
                         log.warning('Extraction failed for %s: %s', doc.id, e)
+                        doc.extraction = None
                         doc.error = str(e)[:1000]
                     session.commit()
                 elif not doc.error:
@@ -96,9 +103,7 @@ def process(run_id):
             for review in reviews:
                 doc = next((d for d in snapshot if d['id'] == review['document_id']), None)
                 if doc:
-                    doc['extraction'] = copy.deepcopy(doc['extraction'] or {})
-                    doc['extraction'].update(review['changes'])
-                    doc['extraction'].update(needs_review=False, reviewed=True)
+                    apply_document_changes(doc, review['changes'], context)
             result = reconcile(context, snapshot)
             result['document_validation'] = validation_log(context, result)
             result.update(context=context, pipeline_version=PIPELINE_VERSION, rules_version=RULES['version'], ocr=ocr.provenance(), reviews=reviews,

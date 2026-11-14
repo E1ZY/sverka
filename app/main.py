@@ -9,7 +9,7 @@ import tempfile
 import threading
 import zipfile
 from contextlib import asynccontextmanager
-from datetime import date, timezone
+from datetime import date
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
@@ -35,7 +35,8 @@ from .fixture_batches import batch_dict
 from .auth import install_auth
 from .cost_tree import build_cost_tree
 from .workspace import asset_catalog, sync_assets, remove_unused_assets, copy_case_documents, case_package
-from .timing import run_timing
+from .timing import run_timing, iso_timestamp
+from .report_corrections import apply_document_changes, parse_amount, DIRECT_COLUMNS
 
 
 @asynccontextmanager
@@ -96,6 +97,21 @@ class Correction(BaseModel):
     reason: str = Field(min_length=5, max_length=1000)
 
 
+class ReportCellCorrection(BaseModel):
+    model_config = {'extra': 'forbid'}
+    year: int = Field(ge=2000, le=2100)
+    column: Literal['4', '7', '8', '9', '12', '13', '14', '15', '16']
+    amount: str = Field(min_length=1, max_length=64)
+
+
+class ReportCorrection(BaseModel):
+    model_config = {'extra': 'forbid'}
+    report_values: dict[Literal['0200', '0300', '0800', '0900', 'total'], str] = Field(default_factory=dict, max_length=5)
+    cost_cells: list[ReportCellCorrection] = Field(default_factory=list, max_length=9)
+    contract: str | None = Field(default=None, min_length=1, max_length=80)
+    reason: str = Field(min_length=5, max_length=1000)
+
+
 def get_case(session, case_id):
     case = session.get(Case, case_id)
     if not case:
@@ -117,12 +133,10 @@ def writable(case):
 
 
 def case_dict(case, run=None):
-    def timestamp(value):
-        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat() if value else None
     return {'id': case.id, 'title': case.title, 'context': case.context, 'status': case.status,
-            'status_changed_at': timestamp(case.status_changed_at),
+            'status_changed_at': iso_timestamp(case.status_changed_at),
             'check_type': 'Сверка затрат по первичным документам', 'user': 'Общий доступ',
-            'created_at': timestamp(case.created_at), 'active_run_id': case.active_run_id, **run_timing(run)}
+            'created_at': iso_timestamp(case.created_at), 'active_run_id': case.active_run_id, **run_timing(run)}
 
 
 @app.get('/api/health')
@@ -291,9 +305,9 @@ def read_case(case_id: str):
         result = active_run.payload if active_run else None
         comparison = compare_fixture(case.context['fixture_id'], result) if case.context.get('fixture_id') and result else None
         return {**case_dict(case, active_run), 'documents': [document_dict(d) for d in docs],
-                'runs': [{'id': r.id, 'created_at': r.created_at.isoformat(), 'status': r.status, 'progress': r.progress, 'message': r.message, **run_timing(r)} for r in runs],
+                'runs': [{'id': r.id, 'created_at': iso_timestamp(r.created_at), 'status': r.status, 'progress': r.progress, 'message': r.message, **run_timing(r)} for r in runs],
                 'result': result, 'fixture_comparison': comparison, 'cost_tree': build_cost_tree(case.context, result),
-                'reviews': [{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'before': r.before, 'reason': r.reason, 'created_at': r.created_at.isoformat()} for r in reviews]}
+                'reviews': [{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'before': r.before, 'reason': r.reason, 'created_at': iso_timestamp(r.created_at)} for r in reviews]}
 
 
 @app.get('/api/cases/{case_id}/cost-tree')
@@ -394,7 +408,71 @@ def review(case_id: str, document_id: str, body: Correction):
                        before={k: effective.get(k) for k in changes}, reason=body.reason)
         session.add(event)
         session.flush()
-        run = enqueue(session, case)
+        try:
+            run = enqueue(session, case)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return {'review_id': event.id, 'run_id': run.id}
+
+
+@app.post('/api/cases/{case_id}/documents/{document_id}/report-review', status_code=201)
+def review_report(case_id: str, document_id: str, body: ReportCorrection):
+    with Session.begin() as session:
+        case = get_case(session, case_id)
+        writable(case)
+        doc = get_document(session, case_id, document_id)
+        if doc.role != 'report':
+            raise HTTPException(400, 'Уточнение КФЗ доступно только для главного отчёта')
+        if not body.report_values and not body.cost_cells and body.contract is None:
+            raise HTTPException(400, 'Укажите хотя бы одно изменение')
+        if len(body.reason.strip()) < 5:
+            raise HTTPException(422, 'Укажите причину уточнения')
+        values, cells = {}, []
+        try:
+            for code, amount in body.report_values.items():
+                if len(amount) > 64:
+                    raise ValueError('Слишком длинная сумма')
+                values[code] = parse_amount(amount)
+            seen = set()
+            for cell in body.cost_cells:
+                if cell.year != int(case.context['period_start'][:4]):
+                    raise ValueError('Уточняйте только год выбранного периода проверки')
+                if cell.column in seen:
+                    raise ValueError('Одна ячейка указана несколько раз')
+                seen.add(cell.column)
+                amount = parse_amount(cell.amount)
+                code = next((code for code, column in DIRECT_COLUMNS.items() if column == cell.column), None)
+                if code:
+                    if code in values and values[code] != amount:
+                        raise ValueError('Итог статьи и значение её единственной колонки должны совпадать')
+                    values[code] = amount
+                cells.append({'year': cell.year, 'column': cell.column, 'amount': amount})
+        except (ValueError, ArithmeticError) as exc:
+            raise HTTPException(422, str(exc)) from None
+        changes = {'report_values': values, 'cost_cells': cells}
+        if body.contract is not None:
+            contract = body.contract.strip()
+            if not contract:
+                raise HTTPException(422, 'Укажите договор из оригинала КФЗ')
+            changes['contract'] = contract
+        effective = document_dict(doc)
+        prior = session.scalars(select(Review).where(Review.document_id == doc.id).order_by(Review.created_at, Review.id)).all()
+        for item in prior:
+            apply_document_changes(effective, item.changes, case.context)
+        fact = effective.get('extraction') or {}
+        year = int(case.context['period_start'][:4])
+        row = next((row for row in fact.get('cost_rows', []) if row['stage'] == case.context['stage'] and row['year'] == year), {})
+        before = {'report_values': {code: fact.get('report_values', {}).get(code) for code in values},
+                  'cost_cells': [{**cell, 'amount': row.get('values', {}).get(cell['column'])} for cell in cells]}
+        if 'contract' in changes:
+            before['contract'] = fact.get('contract')
+        event = Review(case_id=case_id, document_id=document_id, changes=changes, before=before, reason=body.reason.strip())
+        session.add(event)
+        session.flush()
+        try:
+            run = enqueue(session, case)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
         return {'review_id': event.id, 'run_id': run.id}
 
 

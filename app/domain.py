@@ -128,7 +128,7 @@ def reconcile(context, documents):
                 reason = 'Нет единственного расчётного документа для каждого месяца периода.'
         if not context.get('complete_package', False):
             reason = 'Комплект не заявлен полным. Рассчитана только подтверждённая часть.'
-        if actual is None or report.get('needs_review'):
+        if actual is None or report.get('needs_review') or any(doc.get('error') for doc in report_docs):
             reason = 'Значение или строка КФЗ не распознаны уверенно.'
         if report.get('contract') != context['contract']:
             reason = 'Договор итогового отчёта не подтверждён или не совпадает с контекстом.'

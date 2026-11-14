@@ -1,10 +1,19 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from sqlalchemy import create_engine, inspect, select
 
 from app import db, pipeline, timing
 from app.db import Case, Document, Run, Session
+
+
+@pytest.mark.parametrize('status', ['completed', 'failed', 'queued'])
+def test_missing_finish_time_does_not_keep_terminal_or_queued_timer_running(status):
+    started = datetime(2026, 11, 14, 10, tzinfo=timezone.utc)
+    run = Run(status=status, started_at=started)
+    assert timing.run_timing(run, at=started + timedelta(days=1))['duration_seconds'] is None
 
 
 def cached_demo(client, baseline):

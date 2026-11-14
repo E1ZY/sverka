@@ -3,6 +3,7 @@ from sqlalchemy import select
 
 from .db import Run
 from .fixtures import compare_fixture
+from .timing import iso_timestamp
 
 
 def batch_dict(session, batch):
@@ -53,6 +54,6 @@ def batch_dict(session, batch):
     if completed:
         batch.active_key = None
         session.flush()
-    return {'id': batch.id, 'created_at': batch.created_at.isoformat(),
+    return {'id': batch.id, 'created_at': iso_timestamp(batch.created_at),
             'status': 'completed' if completed else 'running', 'total': total, 'done': done,
             'progress': int(done * 100 / total) if total else 100, 'counts': counts, 'items': items}

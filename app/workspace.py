@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
 from .config import DATA
 from .db import Case, Document, DocumentAsset, Review, uid
+from .timing import iso_timestamp
 
 
 def sync_assets(session, documents=None):
@@ -46,7 +47,7 @@ def asset_catalog(session):
         links.setdefault(doc.sha256, {})[case.id] = {'id': case.id, 'title': case.title}
     return [{'id': asset.sha256, 'name': asset.name, 'size': Path(asset.path).stat().st_size if Path(asset.path).is_file() else None,
              'cases': list(links.get(asset.sha256, {}).values()), 'user': 'Общий доступ',
-             'created_at': asset.created_at.isoformat()}
+             'created_at': iso_timestamp(asset.created_at)}
             for asset in session.scalars(select(DocumentAsset).order_by(DocumentAsset.created_at.desc()))]
 
 
@@ -76,6 +77,9 @@ def copy_case_documents(session, source_case, target_case, selected_ids):
     directory = DATA/target_case.id
     directory.mkdir(exist_ok=True)
     mapping = {}
+    report_ids = {doc.id for doc in docs if doc.role == 'report'}
+    same_report_row = (source_case.context['stage'] == target_case.context['stage'] and
+                       source_case.context['period_start'][:4] == target_case.context['period_start'][:4])
     for doc in docs:
         path = directory/(uid() + Path(doc.path).suffix)
         if not Path(doc.path).is_file():
@@ -89,6 +93,8 @@ def copy_case_documents(session, source_case, target_case, selected_ids):
         mapping[doc.id] = target.id
     # Manual corrections belong to the copied input, not to a previous result snapshot.
     for review in session.scalars(select(Review).where(Review.case_id == source_case.id).order_by(Review.created_at, Review.id)):
+        if review.document_id in report_ids and not same_report_row:
+            continue  # Amounts confirmed for one annual row do not confirm another.
         if review.document_id in mapping:
             session.add(Review(case_id=target_case.id, document_id=mapping[review.document_id],
                                changes=copy.deepcopy(review.changes), before=copy.deepcopy(review.before), reason=review.reason))
