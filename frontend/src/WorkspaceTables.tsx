@@ -10,12 +10,14 @@ import {
 import { authFetch } from "./auth";
 import { CaseId } from "./CaseId";
 import { useDialog } from "./useDialog";
+import { formatDuration } from "./duration";
 
 type Check = {
   id: string;
   title: string;
   status: string;
   status_changed_at?: string | null;
+  duration_seconds?: number | null;
   user?: string;
   check_type?: string;
   context: { contract: string; stage: number };
@@ -100,6 +102,7 @@ export function ChecksTable({
               <th>Тип проверки</th>
               <th>Изменение статуса</th>
               <th>Статус</th>
+              <th>Время проверки</th>
               <th>Пользователь</th>
               <th>Действия</th>
             </tr>
@@ -136,6 +139,11 @@ export function ChecksTable({
                   <span className={"case-status " + item.status}>
                     {statuses[item.status] || item.status}
                   </span>
+                </td>
+                <td className="duration-cell" title={item.duration_seconds == null
+                  ? "Время ещё не записано. Для старых запусков измерение не выполнялось."
+                  : "Время обработки без ожидания в очереди"}>
+                  {formatDuration(item.duration_seconds)}
                 </td>
                 <td title="Все проверки доступны в общем рабочем пространстве">
                   {item.user || "Общий доступ"}

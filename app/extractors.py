@@ -18,9 +18,10 @@ from . import ocr
 from .card_metadata import card_metadata
 from .domain import RULES, classify, money
 from .ocr_labels import stage_candidates
+from .ocr_settings import OCRSettings
 
 SUPPORTED = {'.pdf', '.docx', '.xlsx', '.png', '.jpg', '.jpeg'}
-REPORT_PARSER_VERSION = 'kfz-grid-v4-ocr'
+REPORT_PARSER_VERSION = 'kfz-grid-v5-progress'
 MONTHS = ['январ', 'феврал', 'март', 'апрел', 'ма', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр']
 CONTRACT = re.compile(r'\b\d{2}\s*/\s*\d{2}\s*/\s*\d{2}\s*[-–—]\s*\d{2}\b')
 AMOUNT = re.compile(r'(?<![\d/])[-−]?(?:\d{1,3}(?:[ \u00a0]\d{3})+|\d+)[,.]\d{2}(?!\d)')
@@ -206,11 +207,14 @@ def pdf_region_text(path, box):
         return page.get_textbox(rect).strip()
 
 
-def extract_report(path, context):
+def extract_report(path, context, progress=None):
     """KФЗ profile: detect table grid, choose row by OCR label, then read configured columns.
 
     No fixed image coordinates or amounts; transformed/renamed scans use the same profile.
     """
+    update = progress or (lambda message, fraction: None)
+    use_xiaomi = OCRSettings.from_env().provider == 'xiaomi'
+    update('КФЗ: подготовка изображения и поиск таблицы', .01)
     image = page_image(path, 1, dpi=200)
     gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
     bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
@@ -226,9 +230,9 @@ def extract_report(path, context):
     labels = []
     recognized_rows = []
     year = str(date.fromisoformat(context['period_start']).year)
-    for y0, y1 in zip(ys, ys[1:]):
-        if not 8 < y1-y0 < h * .055:
-            continue
+    label_rows = [(y0, y1) for y0, y1 in zip(ys, ys[1:]) if 8 < y1-y0 < h * .055]
+    for index, (y0, y1) in enumerate(label_rows):
+        update(f'КФЗ: поиск этапа и года · строка {index+1}/{len(label_rows)}', .03 + .12*index/max(1,len(label_rows)))
         label_image = image.crop((xs[0]+2, y0+1, xs[2]-2, y1-1))
         label_image = ImageOps.expand(label_image.resize((label_image.width*5, label_image.height*5), Image.Resampling.LANCZOS), border=15, fill='white')
         label = ocr.text(label_image, psm=7)
@@ -265,17 +269,26 @@ def extract_report(path, context):
             confidence = sum(t['confidence'] for t in tokens)/len(tokens) if tokens else 0
             if re.fullmatch(r'\d+,\d{2}', normalized):
                 candidates.append((confidence, str(money(normalized)), text))
+                if use_xiaomi and tokens and min(token['confidence'] for token in tokens) >= 80:
+                    break  # Retry the second crop only when the first model reading is uncertain.
         confidence, value, text = max(candidates, default=(0, None, ''), key=lambda c: c[0])
         return value, fragment(text, page=1, bbox=[x0/w, y0/h, x1/w, y1/h], confidence=round(confidence, 1), column=column), confidence
     for code, column in RULES['report_columns'].items():
+        update(f'КФЗ: чтение итогов · статья {code}', .15 + .15*len(values)/len(RULES['report_columns']))
         values[code], evidence[code], confidence = read_cell(column, *row)
         confidences.append(confidence)
     cost_rows = []
-    for recognized in recognized_rows:
-        if recognized['stage'] not in (context['stage'], context['stage']-1):
-            continue
+    # Only annual rows of the selected stage feed the cost tree. Previous stages
+    # and an already aggregated total row do not require separate model calls.
+    detail_rows = [recognized for recognized in recognized_rows
+                   if recognized['stage'] == context['stage'] and recognized['year'] is not None]
+    detail_columns = (4, 7, 8, 9, 12, 13, 14, 15, 16)
+    for index, recognized in enumerate(detail_rows):
         detail_values, detail_evidence = {}, {}
-        for column in (4, 7, 8, 9, 12, 13, 14, 15, 16):
+        for column_index, column in enumerate(detail_columns):
+            completed = index*len(detail_columns)+column_index
+            update(f'КФЗ: {recognized["year"]} год · ячейка {completed+1}/{len(detail_rows)*len(detail_columns)}',
+                   .30 + .50*completed/max(1,len(detail_rows)*len(detail_columns)))
             value, locator, confidence = read_cell(column, *recognized['bounds'])
             detail_values[str(column)] = value if confidence >= 45 else None
             detail_evidence[str(column)] = locator
@@ -283,13 +296,15 @@ def extract_report(path, context):
     # Header OCR separately avoids dense grid text corrupting contract identifiers.
     header = image.crop((0, 0, w, ys[0]))
     native_header = pdf_region_text(path, [0, 0, 1, ys[0]/h])
-    header_fragments = [fragment(native_header, page=1, bbox=[0,0,1,ys[0]/h], confidence=100)] if native_header else image_fragments(header, 1)
+    update('КФЗ: чтение реквизитов карточки', .82)
+    header_image = header.resize((header.width*2, header.height*2), Image.Resampling.LANCZOS) if use_xiaomi else header
+    header_fragments = [fragment(native_header, page=1, bbox=[0,0,1,ys[0]/h], confidence=100)] if native_header else image_fragments(header_image, 1)
     if not native_header:
         for item in header_fragments:
             item['bbox'][1] *= ys[0]/h
             item['bbox'][3] *= ys[0]/h
     data = metadata(header_fragments)
-    if not native_header:
+    if not native_header and not use_xiaomi:
         business_fragments = image_fragments(header.resize((header.width*2, header.height*2), Image.Resampling.LANCZOS), 1)
         for item in business_fragments:
             item['bbox'][1] *= ys[0]/h
@@ -302,6 +317,7 @@ def extract_report(path, context):
     data.update(report_values=values, report_evidence=evidence, cost_rows=cost_rows, row_label=context['row_label'],
                 needs_review=any(v is None for v in values.values()) or min(confidences) < 45,
                 parser=REPORT_PARSER_VERSION, fragments=list(evidence.values()))
+    update('КФЗ: распознавание завершено', 1.)
     return data
 
 

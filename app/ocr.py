@@ -15,6 +15,9 @@ def words(image: Image.Image, psm=6, numeric=False):
     if settings.provider == 'xiaomi':
         from .xiaomi_ocr import words as xiaomi_words
         result = xiaomi_words(image, settings, psm=psm, numeric=numeric)
+        if psm == 7:
+            # Callers already know the cell/label region and do not consume word boxes.
+            return result
         # Tesseract supplies locations only; Xiaomi remains the text recognizer.
         # Unmatched text keeps its honest, coarse input-region box.
         try:

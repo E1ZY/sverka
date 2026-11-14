@@ -62,6 +62,8 @@ class Run(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     case_id: Mapped[str] = mapped_column(ForeignKey('cases.id'), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default='queued')
     progress: Mapped[int] = mapped_column(Integer, default=0)
     message: Mapped[str] = mapped_column(Text, default='Ожидает обработки')
@@ -115,3 +117,9 @@ def init_db():
     if 'status_changed_at' not in {column['name'] for column in inspect(engine).get_columns('cases')}:
         with engine.begin() as connection:
             connection.execute(text('ALTER TABLE cases ADD COLUMN status_changed_at TIMESTAMP'))
+    run_columns = {column['name'] for column in inspect(engine).get_columns('runs')}
+    time_type = DateTime(timezone=True).compile(dialect=engine.dialect)
+    with engine.begin() as connection:
+        for name in ('started_at', 'finished_at'):
+            if name not in run_columns:
+                connection.execute(text(f'ALTER TABLE runs ADD COLUMN {name} {time_type}'))

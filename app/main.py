@@ -35,6 +35,7 @@ from .fixture_batches import batch_dict
 from .auth import install_auth
 from .cost_tree import build_cost_tree
 from .workspace import asset_catalog, sync_assets, remove_unused_assets, copy_case_documents, case_package
+from .timing import run_timing
 
 
 @asynccontextmanager
@@ -115,13 +116,13 @@ def writable(case):
         raise HTTPException(409, 'Дождитесь завершения текущего запуска')
 
 
-def case_dict(case):
+def case_dict(case, run=None):
     def timestamp(value):
         return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat() if value else None
     return {'id': case.id, 'title': case.title, 'context': case.context, 'status': case.status,
             'status_changed_at': timestamp(case.status_changed_at),
             'check_type': 'Сверка затрат по первичным документам', 'user': 'Общий доступ',
-            'created_at': timestamp(case.created_at), 'active_run_id': case.active_run_id}
+            'created_at': timestamp(case.created_at), 'active_run_id': case.active_run_id, **run_timing(run)}
 
 
 @app.get('/api/health')
@@ -134,7 +135,10 @@ def health():
 @app.get('/api/cases')
 def list_cases():
     with Session() as session:
-        return [case_dict(c) for c in session.scalars(select(Case).order_by(Case.created_at.desc()).limit(100))]
+        cases = session.scalars(select(Case).order_by(Case.created_at.desc()).limit(100)).all()
+        ids = [case.active_run_id for case in cases if case.active_run_id]
+        runs = {run.id: run for run in session.scalars(select(Run).where(Run.id.in_(ids)))} if ids else {}
+        return [case_dict(case, runs.get(case.active_run_id)) for case in cases]
 
 
 @app.post('/api/cases', status_code=201)
@@ -283,10 +287,11 @@ def read_case(case_id: str):
         docs = session.scalars(select(Document).where(Document.case_id == case_id).order_by(Document.name)).all()
         runs = session.scalars(select(Run).where(Run.case_id == case_id).order_by(Run.created_at.desc())).all()
         reviews = session.scalars(select(Review).where(Review.case_id == case_id).order_by(Review.created_at)).all()
-        result = next((r.payload for r in runs if r.id == case.active_run_id), None)
+        active_run = next((r for r in runs if r.id == case.active_run_id), None)
+        result = active_run.payload if active_run else None
         comparison = compare_fixture(case.context['fixture_id'], result) if case.context.get('fixture_id') and result else None
-        return {**case_dict(case), 'documents': [document_dict(d) for d in docs],
-                'runs': [{'id': r.id, 'created_at': r.created_at.isoformat(), 'status': r.status, 'progress': r.progress, 'message': r.message} for r in runs],
+        return {**case_dict(case, active_run), 'documents': [document_dict(d) for d in docs],
+                'runs': [{'id': r.id, 'created_at': r.created_at.isoformat(), 'status': r.status, 'progress': r.progress, 'message': r.message, **run_timing(r)} for r in runs],
                 'result': result, 'fixture_comparison': comparison, 'cost_tree': build_cost_tree(case.context, result),
                 'reviews': [{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'before': r.before, 'reason': r.reason, 'created_at': r.created_at.isoformat()} for r in reviews]}
 

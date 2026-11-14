@@ -43,6 +43,7 @@ import { AuthGate } from "./AuthGate";
 import { authFetch } from "./auth";
 import { CaseId } from "./CaseId";
 import { ChecksTable, DocumentsRegister } from "./WorkspaceTables";
+import { formatDuration } from "./duration";
 import type { TreeSnapshot } from "./CostTreePanel";
 import "./workspace.css";
 
@@ -137,6 +138,7 @@ type Case = {
   status: string;
   created_at?: string;
   status_changed_at?: string | null;
+  duration_seconds?: number | null;
   user?: string;
   check_type?: string;
   cost_tree?: TreeSnapshot | null;
@@ -158,6 +160,9 @@ type Case = {
     progress: number;
     message: string;
     created_at: string;
+    started_at?: string | null;
+    finished_at?: string | null;
+    duration_seconds?: number | null;
   }[];
   reviews?: {
     id: string;
@@ -739,6 +744,12 @@ function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
                       : current.status === "failed"
                         ? "Ошибка обработки"
                         : "Комплект документов"}
+                  {current.duration_seconds != null && (
+                    <small className="check-duration" title="Время обработки без ожидания в очереди">
+                      <Clock3 size={14} />
+                      {running ? "Прошло " : "Время проверки: "}{formatDuration(current.duration_seconds)}
+                    </small>
+                  )}
                   <button className="icon-button delete-current-check" aria-label="Удалить эту проверку"
                     title={running ? "Дождитесь завершения проверки" : "Удалить проверку"}
                     disabled={busy || running} onClick={() => openDeleteCheck(current)}><Trash2 size={17} /></button>
@@ -1184,6 +1195,7 @@ function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
                         <p>
                           {new Date(r.created_at).toLocaleString("ru-RU")} ·{" "}
                           {r.message}
+                          {r.duration_seconds != null && <> · Время: {formatDuration(r.duration_seconds)}</>}
                         </p>
                       </div>
                       {r.status === "completed" && (

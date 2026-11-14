@@ -59,7 +59,7 @@ def test_changing_ocr_provider_reextracts_inputs_and_preserves_previous_run(clie
         for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id'])):
             doc.extraction = {**facts[doc.name], 'ocr_signature': 'tesseract-v1'}
     before = deepcopy(client.get('/api/cases/'+baseline['id']).json()['result'])
-    report = Mock(side_effect=lambda path, context: deepcopy(next(doc['extraction'] for doc in baseline['result']['documents'] if doc['role'] == 'report')))
+    report = Mock(side_effect=lambda path, context, **kwargs: deepcopy(next(doc['extraction'] for doc in baseline['result']['documents'] if doc['role'] == 'report')))
     # Uploaded paths use generated names: resolve them through the document table.
     with Session() as session:
         paths = {doc.path: facts[doc.name] for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id']))}
@@ -76,3 +76,30 @@ def test_changing_ocr_provider_reextracts_inputs_and_preserves_previous_run(clie
     assert primary.call_count == len({doc['sha256'] for doc in case['documents'] if doc['role'] == 'primary'})
     assert all(doc['extraction']['ocr_signature'] == 'xiaomi-test-revision' for doc in case['documents'])
     assert client.get('/api/cases/'+baseline['id']).json()['result'] == before
+
+
+def test_report_progress_is_visible_before_document_extraction_finishes(client, baseline, monkeypatch):
+    from app.db import Run, now
+    demo = client.post('/api/demo').json()
+    facts = {doc['name']: deepcopy(doc['extraction']) for doc in baseline['result']['documents']}
+    with Session.begin() as session:
+        for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id'])):
+            if doc.role != 'report':
+                doc.extraction = facts[doc.name]
+    observed = []
+    def extract(path, context, progress):
+        progress('КФЗ: чтение ячеек · 5/18', .5)
+        with Session() as session:
+            run = session.get(Run, demo['run_id'])
+            observed.append((run.progress, run.message))
+            assert run.status == 'running'
+            assert run.lease_until.replace(tzinfo=None) > now().replace(tzinfo=None)
+        return deepcopy(next(doc['extraction'] for doc in baseline['result']['documents'] if doc['role'] == 'report'))
+    monkeypatch.setattr(pipeline, 'extract_report', extract)
+    run_id = pipeline.claim()
+    assert run_id == demo['run_id']
+    pipeline.process(run_id)
+    assert observed and 0 < observed[0][0] < 85
+    assert '5/18' in observed[0][1]
+    case = client.get('/api/cases/'+demo['case_id']).json()
+    assert case['status'] == 'completed' and case['runs'][0]['progress'] == 100

@@ -66,6 +66,18 @@
   font-size: 10px;
   margin-top: 5px;
 }
+.duration-cell, .check-duration {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.context-right .check-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 5px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
 .register-title {
   text-align: left;
   display: flex;

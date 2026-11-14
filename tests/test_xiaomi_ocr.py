@@ -77,6 +77,16 @@ def test_xiaomi_does_not_silently_fall_back_to_tesseract(monkeypatch):
         ocr.words(Image.new('RGB', (50, 20)))
 
 
+def test_known_cell_region_does_not_run_a_second_ocr_for_word_locations(monkeypatch):
+    monkeypatch.setattr(ocr.OCRSettings, 'from_env', lambda: OCRSettings(provider='xiaomi'))
+    result = [{'text': '100,00', 'bbox': [0, 0, 50, 20], 'confidence': 91, 'line': 1, 'bbox_precision': 'region'}]
+    monkeypatch.setattr(xiaomi_ocr, 'words', lambda *a, **k: result)
+    def unexpected(*args):
+        raise AssertionError('A cell already has a known source rectangle')
+    monkeypatch.setattr(ocr, '_tesseract_words', unexpected)
+    assert ocr.words(Image.new('RGB', (50, 20)), psm=7, numeric=True) == result
+
+
 def test_missing_model_has_actionable_setup_error(tmp_path):
     with pytest.raises(RuntimeError, match='setup_xiaomi_ocr.py'):
         xiaomi_ocr._load(str(tmp_path), 'cpu')

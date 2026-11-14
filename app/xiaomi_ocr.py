@@ -86,8 +86,9 @@ def words(image, settings, psm=6, numeric=False):
         class Confidence(LogitsProcessor):
             def __call__(self, input_ids, logits):
                 probabilities = logits[0].float()
-                score = (probabilities.max() - torch.logsumexp(probabilities, dim=-1)).item()
-                scores.append(min(0., score) if math.isfinite(score) else -math.inf)
+                # Keep scalar tensors on the GPU; .item() here would synchronize
+                # the CPU and GPU after every generated token.
+                scores.append((probabilities.max() - torch.logsumexp(probabilities, dim=-1)).detach())
                 return logits
 
         messages = [{'role': 'user', 'content': [{'type': 'image', 'image': image.convert('RGB')},
@@ -105,4 +106,6 @@ def words(image, settings, psm=6, numeric=False):
             raise RuntimeError('Xiaomi OCR не закончила распознавание: достигнут лимит времени или текста. Частичный результат не принят.')
         if len(ids) != len(scores):
             raise RuntimeError('Xiaomi OCR: не удалось сопоставить текст с оценками уверенности.')
+        scores = [min(0., value) if math.isfinite(value) else -math.inf
+                  for value in torch.stack(scores).cpu().tolist()]
         return generation_words(processor.tokenizer, ids, scores, image.size)
