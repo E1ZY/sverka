@@ -960,7 +960,7 @@ function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
                 </div>
               </div>
               {tab === "checks" && current.cost_tree && <Suspense fallback={<section className="panel empty-small" role="status">Загружаем дерево отчёта…</section>}>
-                <CostTreePanel key={current.active_run_id} tree={current.cost_tree} onSource={showSource}/>
+                <CostTreePanel key={current.active_run_id} tree={current.cost_tree} caseId={current.id} runId={current.active_run_id} onSource={showSource}/>
               </Suspense>}
               {tab === "checks" &&
                 (result ? (

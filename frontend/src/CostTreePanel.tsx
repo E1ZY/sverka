@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, FileText } from "lucide-react";
 import { Column } from "primereact/column";
 import { addLocale, PrimeReactProvider } from "primereact/api";
 import { TreeTable, type TreeTableExpandedKeysType } from "primereact/treetable";
 import type { TreeNode as PrimeTreeNode } from "primereact/treenode";
+import { authFetch } from "./auth";
 
 const tableLocale = { aria: { expandLabel: "Развернуть строку", collapseLabel: "Свернуть строку", expandRow: "Развернуть строку", collapseRow: "Свернуть строку" } };
 addLocale("sverka-ru", tableLocale);
@@ -67,6 +68,10 @@ export type TreeSnapshot = {
   metadata: Metadata;
   note: string;
   document_validation: Validation[];
+  outside_periods?: number[];
+  include_out_of_scope?: boolean;
+  period_start?: string;
+  period_end?: string;
 };
 const rub = (value: string | null | undefined) =>
   value == null
@@ -80,6 +85,7 @@ const labels: Record<string, string> = {
   MISMATCH: "Расхождение",
   INSUFFICIENT_DATA: "Непроверено",
   UNALLOCATED: "Не распределено",
+  OUT_OF_SCOPE: "Вне проверки",
 };
 const groups: Record<string, string> = {
   "0200": "Оплата труда",
@@ -341,15 +347,43 @@ function TreeGroup({
 }
 
 export function CostTreePanel({
-  tree,
+  tree: initialTree,
+  caseId,
+  runId,
   onSource,
 }: {
   tree: TreeSnapshot;
+  caseId: string;
+  runId?: string;
   onSource: (id: string, evidence?: Evidence) => void;
 }) {
   const [tab, setTab] = useState("costs"),
     [view, setView] = useState("compare"),
-    [issues, setIssues] = useState(false);
+    [issues, setIssues] = useState(false),
+    [includeOutOfScope, setIncludeOutOfScope] = useState(false),
+    [extendedTree, setExtendedTree] = useState<TreeSnapshot | null>(null),
+    [scopeLoading, setScopeLoading] = useState(false),
+    [scopeError, setScopeError] = useState("");
+  const tree = includeOutOfScope && extendedTree ? extendedTree : initialTree;
+  useEffect(() => {
+    if (!includeOutOfScope) {
+      setScopeLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setScopeLoading(true);
+    setScopeError("");
+    authFetch(`/api/cases/${caseId}/cost-tree?include_out_of_scope=true`, { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error("Не удалось загрузить периоды вне проверки. Снимите галочку и попробуйте ещё раз.");
+        const data = await response.json() as { run_id: string; tree: TreeSnapshot | null };
+        if (runId && data.run_id !== runId) throw new Error("Результат проверки обновился. Обновите страницу.");
+        if (!controller.signal.aborted) setExtendedTree(data.tree);
+      })
+      .catch(error => { if (!controller.signal.aborted) setScopeError((error as Error).message); })
+      .finally(() => { if (!controller.signal.aborted) setScopeLoading(false); });
+    return () => controller.abort();
+  }, [includeOutOfScope, caseId, runId]);
   const [expanded, setExpanded] = useState(
     Object.fromEntries(["stage", ...tree.root.children.map((child) => child.id)].map(id => [id, true])) as TreeTableExpandedKeysType,
   );
@@ -357,7 +391,7 @@ export function CostTreePanel({
     // Also hide reference rows when viewing a response from an older server.
     if (node.reference || node.status === "REFERENCE" || (view === "claimed" && node.allocation)) return null;
     const children = node.children.map(toTableNode).filter((child): child is PrimeTreeNode => child !== null);
-    if (issues && node.status === "MATCH" && !children.length) return null;
+    if (issues && ["MATCH", "OUT_OF_SCOPE"].includes(node.status) && !children.length) return null;
     return { key: node.id, data: node, children, leaf: !children.length };
   };
   const root = toTableNode(tree.root);
@@ -424,11 +458,23 @@ export function CostTreePanel({
               />
               Только проблемы
             </label>
+            {!!initialTree.outside_periods?.length && <label className="tree-issues">
+              <input type="checkbox" checked={includeOutOfScope}
+                onChange={event => { setScopeError(""); setIncludeOutOfScope(event.target.checked); }} />
+              Показать периоды вне проверки
+            </label>}
           </div>
+          {tree.period_start && tree.period_end && <p className="tree-scope-label">
+            Период проверки: <strong>{tree.period_start.split("-").reverse().join(".")} — {tree.period_end.split("-").reverse().join(".")}</strong>.
+            {tree.include_out_of_scope ? " Показаны также годы вне проверки; их суммы включены в итоги этапа." : " Итоги дерева включают только год выбранного периода."}
+          </p>}
+          {scopeLoading && <p className="tree-explanation" role="status">Загружаем периоды вне проверки…</p>}
+          {scopeError && <p className="form-error" role="alert">{scopeError}</p>}
           <div className="tree-legend">
             <span className="MATCH">Обосновано · 1</span>
             <span className="INSUFFICIENT_DATA">Непроверено / нет разбивки · 2</span>
             <span className="MISMATCH">Расхождение · 3</span>
+            {tree.include_out_of_scope && <span className="OUT_OF_SCOPE">Вне проверки</span>}
             <small>
               Красный — выявлено расхождение. Жёлтый — данных недостаточно. Родитель наследует самый строгий статус.
             </small>

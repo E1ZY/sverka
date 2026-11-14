@@ -13,7 +13,7 @@ CATEGORIES = [
     ('0900', 'Общехозяйственные затраты', [(16, 'Общехозяйственные расходы')]),
 ]
 # Missing proof is a warning; an established discrepancy takes precedence.
-WEIGHTS = {'MATCH': 1, 'INSUFFICIENT_DATA': 2, 'UNALLOCATED': 2, 'MISMATCH': 3}
+WEIGHTS = {'OUT_OF_SCOPE': 0, 'MATCH': 1, 'INSUFFICIENT_DATA': 2, 'UNALLOCATED': 2, 'MISMATCH': 3}
 
 
 def amount_sum(values):
@@ -21,14 +21,16 @@ def amount_sum(values):
     return str(sum((money(value) for value in values), Decimal('0'))) if values and all(v is not None for v in values) else None
 
 
-def build_cost_tree(context, result):
+def build_cost_tree(context, result, include_out_of_scope=False):
     if not result or not isinstance(result.get('documents'), list):
         return None
     report = next((doc for doc in result['documents'] if doc['role'] == 'report'), {})
     fact = report.get('extraction') or {}
     rows = fact.get('cost_rows', [])
     stage, selected_year = context['stage'], int(context['period_start'][:4])
-    periods = sorted({row['year'] for row in rows if row['stage'] == stage and row['year']} | {selected_year})
+    all_periods = sorted({row['year'] for row in rows if row['stage'] == stage and row['year']} | {selected_year})
+    outside_periods = [year for year in all_periods if year != selected_year]
+    periods = all_periods if include_out_of_scope else [selected_year]
     metrics = {metric['code']: metric for metric in result['metrics']}
 
     def leaf(code, column, year):
@@ -41,7 +43,11 @@ def build_cost_tree(context, result):
         if value is None and column in (15, 16) and year == selected_year:
             value, evidence = metric.get('actual'), metric.get('report_evidence')
         status = 'INSUFFICIENT_DATA' if value is None or expected is None else ('MATCH' if money(value) == money(expected) else 'MISMATCH')
-        if value is None:
+        outside_scope = year != selected_year
+        if outside_scope:
+            status = 'OUT_OF_SCOPE'
+            reason = 'Вне периода проверки. Первичные документы за этот год не оценивались в этой сверке.'
+        elif value is None:
             reason = 'НЕПРОВЕРЕНО: заявленная сумма этой строки не распознана в карточке.'
         elif expected is None:
             reason = 'НЕПРОВЕРЕНО: ' + ('нет распределения документов по подкатегории.' if column not in (15, 16) else 'нет подтверждения за этот период.')
@@ -52,7 +58,7 @@ def build_cost_tree(context, result):
                 'code': str(column), 'actual': value, 'expected': expected, 'status': status,
                 'delta': str(money(value)-money(expected)) if value is not None and expected is not None else None,
                 'evidence': evidence, 'report_id': report.get('id'),
-                'reason': reason,
+                'reason': reason, 'outside_scope': outside_scope,
                 'sources': metric.get('terms', []) if expected is not None else [], 'children': []}
 
     def parent(identifier, name, children, code=''):
@@ -61,22 +67,32 @@ def build_cost_tree(context, result):
         partial = [child.get('expected') if child.get('expected') is not None else child.get('confirmed_subtotal') for child in children]
         partial = [value for value in partial if value is not None]
         status = max((child['status'] for child in children), key=lambda s: WEIGHTS[s], default='INSUFFICIENT_DATA')
+        outside_scope = bool(children) and all(child.get('outside_scope') for child in children)
+        includes_outside_scope = any(child.get('outside_scope') or child.get('includes_outside_scope') for child in children)
+        if includes_outside_scope and status == 'MATCH':
+            status = 'INSUFFICIENT_DATA'
         if status == 'MISMATCH':
             problem = next(child for child in children if child['status'] == 'MISMATCH')
             reason = f'Есть расхождение в дочерней строке «{problem["name"]}». Разверните ветку для просмотра расчёта.'
+        elif status == 'OUT_OF_SCOPE':
+            reason = 'Вне периода проверки. Эти суммы показаны для просмотра и не проверялись в этой сверке.'
+        elif includes_outside_scope:
+            reason = 'Подтверждение за период проверки не покрывает всю сумму: в неё также входят периоды вне проверки.'
         elif status in ('INSUFFICIENT_DATA', 'UNALLOCATED'):
             reason = 'НЕПРОВЕРЕНО: не все дочерние строки обеспечены подтверждением или разбивкой. Это не доказывает расхождение сумм.'
         else:
             reason = None
         return {'id': identifier, 'code': code, 'name': name, 'actual': actual, 'expected': expected, 'status': status,
                 'delta': str(money(actual)-money(expected)) if actual is not None and expected is not None else None,
-                'children': children, 'sources': [], 'confirmed_subtotal': amount_sum(partial), 'reason': reason}
+                'children': children, 'sources': [], 'confirmed_subtotal': amount_sum(partial), 'reason': reason,
+                'outside_scope': outside_scope, 'includes_outside_scope': includes_outside_scope}
 
     categories = []
     for code, name, columns in CATEGORIES:
         children = []
         for column, title in columns:
-            subtotal = parent(f'{code}.{column}.total', f'Всего {stage} этап', [leaf(code, column, year) for year in periods])
+            subtotal_title = f'Всего {stage} этап' if include_out_of_scope else f'Всего за {selected_year}'
+            subtotal = parent(f'{code}.{column}.total', subtotal_title, [leaf(code, column, year) for year in periods])
             children.append(parent(f'{code}.{column}', title, [subtotal], str(column)))
         metric = metrics.get(code, {})
         if code in ('0200', '0300') and metric.get('terms'):
@@ -86,6 +102,11 @@ def build_cost_tree(context, result):
                              'reason': 'НЕПРОВЕРЕНО: есть принятые документы по статье, но их распределение по подкатегориям не подтверждено.'})
         categories.append(parent(code, name, children, '' if code == 'materials' else code))
     root = parent('stage', f'{stage} этап', categories)
-    return {'root': root, 'periods': periods, 'metadata': fact.get('business_metadata') or card_metadata([{'text': fact.get('text', ''), 'page': 1}]),
+    return {'root': root, 'periods': periods, 'outside_periods': outside_periods,
+            'include_out_of_scope': include_out_of_scope,
+            'period_start': context['period_start'], 'period_end': context['period_end'],
+            'metadata': fact.get('business_metadata') or card_metadata([{'text': fact.get('text', ''), 'page': 1}]),
             'document_validation': result.get('document_validation') or validation_log(context, result),
-            'note': 'Деревья включают только распознанные годовые строки проверяемого этапа. Документы проверяются за выбранный период сверки. Неизвестные суммы не заменяются нулём. Принятые документы без разбивки по подкатегориям показаны отдельной веткой; их сумма подтверждена только частично.'}
+            'note': ('Показаны все распознанные годы проверяемого этапа; серые строки вне периода проверки. Их суммы входят в отображаемые итоги этапа, но их обоснованность не оценивалась. '
+                     if include_out_of_scope else 'Показан только год выбранного периода проверки; скрытые годы не входят в отображаемые итоги. ')
+                    + 'Документы проверяются за выбранные даты. Неизвестные суммы не заменяются нулём. Принятые документы без разбивки по подкатегориям показаны отдельной веткой; их сумма подтверждена только частично.'}

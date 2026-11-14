@@ -130,12 +130,12 @@ def test_tree_hides_other_stages_and_propagates_strictest_status():
         {'stage':4,'year':2027,'values':{**columns,'15':'8000000'}},
     ]}}]
     metrics = [{'code':'0800','actual':'20','expected':'19','terms':[]}]
-    tree = build_cost_tree(CONTEXT, {'documents':docs,'metrics':metrics,'findings':[]})
+    tree = build_cost_tree(CONTEXT, {'documents':docs,'metrics':metrics,'findings':[]}, include_out_of_scope=True)
     assert tree['root']['actual'] == '30.00'
     assert tree['root']['expected'] is None
     assert tree['root']['status'] == 'MISMATCH'
     branch = next(node for node in tree['root']['children'] if node['id']=='0800')
-    assert branch['status'] == 'MISMATCH'  # a proven 2026 mismatch outranks unverified 2025
+    assert branch['status'] == 'MISMATCH'  # the known mismatch remains visible beside an unchecked year
     def flatten(node):
         return [node, *(child for branch in node['children'] for child in flatten(branch))]
     nodes = flatten(tree['root'])
@@ -144,6 +144,7 @@ def test_tree_hides_other_stages_and_propagates_strictest_status():
     assert tree['periods'] == [2025, 2026]
     leaves = branch['children'][0]['children'][0]['children']
     assert [leaf['actual'] for leaf in leaves] == ['10', '20']
+    assert leaves[0]['status'] == 'OUT_OF_SCOPE'
     assert branch['children'][0]['children'][0]['children'][1]['status'] == 'MISMATCH'
 
 

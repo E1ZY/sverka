@@ -296,6 +296,16 @@ def read_case(case_id: str):
                 'reviews': [{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'before': r.before, 'reason': r.reason, 'created_at': r.created_at.isoformat()} for r in reviews]}
 
 
+@app.get('/api/cases/{case_id}/cost-tree')
+def read_cost_tree(case_id: str, include_out_of_scope: bool = False):
+    with Session() as session:
+        case = get_case(session, case_id)
+        run = session.get(Run, case.active_run_id) if case.active_run_id else None
+        result = run.payload if run else None
+        return {'run_id': case.active_run_id,
+                'tree': build_cost_tree(case.context, result, include_out_of_scope=include_out_of_scope)}
+
+
 @app.post('/api/cases/{case_id}/documents', status_code=201)
 def upload(case_id: str, role: Literal['report', 'primary'] = Form(...), files: list[UploadFile] = File(...)):
     written = []
