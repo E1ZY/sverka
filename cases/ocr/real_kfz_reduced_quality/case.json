@@ -1,0 +1,20 @@
+{
+  "id": "real_kfz_reduced_quality",
+  "kind": "real_reduced",
+  "input": "report.jpeg",
+  "sha256": "07cec1f95e58cb908a3b24ba6329360d5c7fce2a7d8bc0c5cd32fef842ca736f",
+  "quality": "user_supplied_reduced",
+  "size": [
+    1200,
+    848
+  ],
+  "source_name": "01_Карточка_учета_фактических_затрат_этап_3_image_1_reduced_quality.jpeg",
+  "context": {
+    "contract": "24/03/15-01",
+    "stage": 3,
+    "period_start": "2026-01-01",
+    "period_end": "2026-05-31",
+    "row_label": "3 этап, 2026 г.",
+    "complete_package": true
+  }
+}

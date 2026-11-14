@@ -9,6 +9,34 @@ from app.db import Document, Session
 from app.extractors import REPORT_PARSER_VERSION
 
 
+def test_failed_report_refresh_discards_stale_values_and_can_be_retried(client, baseline, monkeypatch):
+    demo = client.post('/api/demo').json()
+    facts = {doc['name']: deepcopy(doc['extraction']) for doc in baseline['result']['documents']}
+    report_fact = deepcopy(next(doc['extraction'] for doc in baseline['result']['documents'] if doc['role'] == 'report'))
+    with Session.begin() as session:
+        for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id'])):
+            fact = facts[doc.name]
+            if doc.role == 'report':
+                fact['parser'] = 'outdated'
+            doc.extraction = fact
+    failed = Mock(side_effect=RuntimeError('OCR unavailable'))
+    monkeypatch.setattr(pipeline, 'extract_report', failed)
+    assert pipeline.claim() == demo['run_id']
+    pipeline.process(demo['run_id'])
+    case = client.get('/api/cases/' + demo['case_id']).json()
+    report = next(doc for doc in case['documents'] if doc['role'] == 'report')
+    assert report['extraction'] is None and report['error'] == 'OCR unavailable'
+    assert all(metric['actual'] is None and metric['status'] == 'INSUFFICIENT_DATA' for metric in case['result']['metrics'])
+    success = Mock(return_value=report_fact)
+    monkeypatch.setattr(pipeline, 'extract_report', success)
+    retry = client.post('/api/cases/' + demo['case_id'] + '/runs').json()
+    assert pipeline.claim() == retry['id']
+    pipeline.process(retry['id'])
+    recovered = client.get('/api/cases/' + demo['case_id']).json()
+    success.assert_called_once()
+    assert recovered['result']['metrics'][2]['delta'] == '12500.00'
+
+
 @pytest.mark.parametrize('cached_parser', ['kfz-grid-v1', REPORT_PARSER_VERSION])
 def test_recalculate_refreshes_outdated_report_but_keeps_current_review_gate(
         client, baseline, monkeypatch, cached_parser):
@@ -50,3 +78,56 @@ def test_recalculate_refreshes_outdated_report_but_keeps_current_review_gate(
         report_extractor.assert_not_called()
         assert all(metric['status'] == 'INSUFFICIENT_DATA' for metric in metrics)
         assert all(metric['expected'] is None for metric in metrics)
+
+
+def test_changing_ocr_provider_reextracts_inputs_and_preserves_previous_run(client, baseline, monkeypatch):
+    demo = client.post('/api/demo').json()
+    facts = {doc['name']: deepcopy(doc['extraction']) for doc in baseline['result']['documents']}
+    with Session.begin() as session:
+        for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id'])):
+            doc.extraction = {**facts[doc.name], 'ocr_signature': 'tesseract-v1'}
+    before = deepcopy(client.get('/api/cases/'+baseline['id']).json()['result'])
+    report = Mock(side_effect=lambda path, context, **kwargs: deepcopy(next(doc['extraction'] for doc in baseline['result']['documents'] if doc['role'] == 'report')))
+    # Uploaded paths use generated names: resolve them through the document table.
+    with Session() as session:
+        paths = {doc.path: facts[doc.name] for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id']))}
+    primary = Mock(side_effect=lambda path: deepcopy(paths[path]))
+    monkeypatch.setattr(pipeline.ocr, 'signature', lambda: 'xiaomi-test-revision')
+    monkeypatch.setattr(pipeline, 'extract_report', report)
+    monkeypatch.setattr(pipeline, 'extract_primary', primary)
+    run_id = pipeline.claim()
+    assert run_id == demo['run_id']
+    pipeline.process(run_id)
+    case = client.get('/api/cases/'+demo['case_id']).json()
+    assert case['status'] == 'completed'
+    report.assert_called_once()
+    assert primary.call_count == len({doc['sha256'] for doc in case['documents'] if doc['role'] == 'primary'})
+    assert all(doc['extraction']['ocr_signature'] == 'xiaomi-test-revision' for doc in case['documents'])
+    assert client.get('/api/cases/'+baseline['id']).json()['result'] == before
+
+
+def test_report_progress_is_visible_before_document_extraction_finishes(client, baseline, monkeypatch):
+    from app.db import Run, now
+    demo = client.post('/api/demo').json()
+    facts = {doc['name']: deepcopy(doc['extraction']) for doc in baseline['result']['documents']}
+    with Session.begin() as session:
+        for doc in session.scalars(select(Document).where(Document.case_id == demo['case_id'])):
+            if doc.role != 'report':
+                doc.extraction = facts[doc.name]
+    observed = []
+    def extract(path, context, progress):
+        progress('КФЗ: чтение ячеек · 5/18', .5)
+        with Session() as session:
+            run = session.get(Run, demo['run_id'])
+            observed.append((run.progress, run.message))
+            assert run.status == 'running'
+            assert run.lease_until.replace(tzinfo=None) > now().replace(tzinfo=None)
+        return deepcopy(next(doc['extraction'] for doc in baseline['result']['documents'] if doc['role'] == 'report'))
+    monkeypatch.setattr(pipeline, 'extract_report', extract)
+    run_id = pipeline.claim()
+    assert run_id == demo['run_id']
+    pipeline.process(run_id)
+    assert observed and 0 < observed[0][0] < 85
+    assert '5/18' in observed[0][1]
+    case = client.get('/api/cases/'+demo['case_id']).json()
+    assert case['status'] == 'completed' and case['runs'][0]['progress'] == 100

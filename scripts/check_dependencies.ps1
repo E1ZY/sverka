@@ -130,16 +130,26 @@ if ($PythonExe) {
     }
 }
 
+# Project readiness must never inspect a fallback/global Python instead of .venv.
+if ($Project) {
+    $candidates.Clear()
+    $candidates.Add([pscustomobject]@{ path = (Join-Path $projectRoot '.venv\Scripts\python.exe'); prefix = @() })
+}
+
 $pythonInfo = $null
 $fallbackPython = $null
 $pythonFailure = 'Рабочий Python не найден. Windows Store alias не считается установленным интерпретатором.'
-$pythonCode = "import json,struct,sys; print(json.dumps(dict(version=list(sys.version_info[:3]),bits=struct.calcsize('P')*8,executable=sys.executable)))"
+$pythonCode = "import json,struct,sys; print(json.dumps(dict(version=list(sys.version_info[:3]),bits=struct.calcsize('P')*8,executable=sys.executable,prefix=sys.prefix,base_prefix=sys.base_prefix)))"
 foreach ($candidate in $candidates) {
     $probe = Invoke-Probe $candidate.path (@($candidate.prefix) + @('-c', $pythonCode))
     if ($probe.exitCode -eq 0) {
         try {
             $info = $probe.output | ConvertFrom-Json
             if ($info.version.Count -eq 3 -and $info.executable) {
+                if ($Project -and ([System.IO.Path]::GetFullPath($info.prefix) -ne [System.IO.Path]::GetFullPath((Join-Path $projectRoot '.venv')) -or $info.prefix -eq $info.base_prefix)) {
+                    $pythonFailure = 'Python запущен вне .venv этого проекта. Восстановите окружение по разделу 1.8 README.md.'
+                    continue
+                }
                 $chosenExplicitly = $PythonExe -or $candidate.path -eq (Join-Path $projectRoot '.venv\Scripts\python.exe')
                 if ($chosenExplicitly -or ($info.version[0] -eq 3 -and $info.version[1] -eq 12 -and $info.bits -eq 64)) {
                     $pythonInfo = $info
@@ -206,7 +216,8 @@ if (Find-Tool @('git.exe', 'git')) {
 
 if ($Project) {
     if (Test-Path -LiteralPath (Join-Path $projectRoot '.venv\Scripts\python.exe') -PathType Leaf) {
-        Add-Check '.venv' 'OK' 'Окружение проекта существует.'
+        if ($pythonInfo) { Add-Check '.venv' 'OK' 'Python окружения проекта запускается.' }
+        else { Add-Check '.venv' 'ERROR' 'Файл python.exe существует, но окружение не запускается.' 'Проверьте .venv\pyvenv.cfg: базовый Python мог быть удалён. Восстановление описано в разделе 1.8 README.md.' }
     } else { Add-Check '.venv' 'ERROR' 'Окружение проекта не создано.' 'В корне проекта: py -3.12 -m venv .venv' }
     if ($pythonInfo) {
         $packageCode = @'

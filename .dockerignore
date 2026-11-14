@@ -14,3 +14,5 @@ task/data/00_*
 task/*.docx
 tests
 .env
+compose.override.yaml
+compose.override.yml

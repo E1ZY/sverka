@@ -21,9 +21,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
+from starlette.background import BackgroundTask
 
 from .config import DATA, DEMO_DIR, MAX_CASE_FILES, MAX_FILE_BYTES, ROOT
-from .db import Case, Document, FixtureBatch, Review, Run, Session, init_db, uid
+from .db import Case, Document, DocumentAsset, FixtureBatch, Review, Run, Session, init_db, uid
 from .domain import ARTICLES, money
 from .extractors import SUPPORTED, digest, page_image
 from .pipeline import document_dict, enqueue, loop
@@ -32,6 +33,10 @@ from .report_context import extract_report_context
 from .fixtures import compare_fixture, fixture_inputs, list_fixtures, load_oracle
 from .fixture_batches import batch_dict
 from .auth import install_auth
+from .cost_tree import build_cost_tree
+from .workspace import asset_catalog, sync_assets, remove_unused_assets, copy_case_documents, case_package
+from .timing import run_timing, iso_timestamp
+from .report_corrections import apply_document_changes, parse_amount, DIRECT_COLUMNS
 
 
 @asynccontextmanager
@@ -76,6 +81,11 @@ class NewCase(Context):
 
 class ClearCases(BaseModel):
     case_ids: list[UUID] = Field(min_length=1, max_length=100)
+    delete_unlinked_documents: bool = True
+
+
+class CopyCase(NewCase):
+    document_ids: list[UUID] = Field(default_factory=list, max_length=100)
 
 
 class Correction(BaseModel):
@@ -84,6 +94,21 @@ class Correction(BaseModel):
     contract: str | None = Field(default=None, max_length=80)
     period_start: date | None = None
     period_end: date | None = None
+    reason: str = Field(min_length=5, max_length=1000)
+
+
+class ReportCellCorrection(BaseModel):
+    model_config = {'extra': 'forbid'}
+    year: int = Field(ge=2000, le=2100)
+    column: Literal['4', '7', '8', '9', '12', '13', '14', '15', '16']
+    amount: str = Field(min_length=1, max_length=64)
+
+
+class ReportCorrection(BaseModel):
+    model_config = {'extra': 'forbid'}
+    report_values: dict[Literal['0200', '0300', '0800', '0900', 'total'], str] = Field(default_factory=dict, max_length=5)
+    cost_cells: list[ReportCellCorrection] = Field(default_factory=list, max_length=9)
+    contract: str | None = Field(default=None, min_length=1, max_length=80)
     reason: str = Field(min_length=5, max_length=1000)
 
 
@@ -107,9 +132,11 @@ def writable(case):
         raise HTTPException(409, 'Дождитесь завершения текущего запуска')
 
 
-def case_dict(case):
+def case_dict(case, run=None):
     return {'id': case.id, 'title': case.title, 'context': case.context, 'status': case.status,
-            'created_at': case.created_at.isoformat(), 'active_run_id': case.active_run_id}
+            'status_changed_at': iso_timestamp(case.status_changed_at),
+            'check_type': 'Сверка затрат по первичным документам', 'user': 'Общий доступ',
+            'created_at': iso_timestamp(case.created_at), 'active_run_id': case.active_run_id, **run_timing(run)}
 
 
 @app.get('/api/health')
@@ -122,7 +149,10 @@ def health():
 @app.get('/api/cases')
 def list_cases():
     with Session() as session:
-        return [case_dict(c) for c in session.scalars(select(Case).order_by(Case.created_at.desc()).limit(100))]
+        cases = session.scalars(select(Case).order_by(Case.created_at.desc()).limit(100)).all()
+        ids = [case.active_run_id for case in cases if case.active_run_id]
+        runs = {run.id: run for run in session.scalars(select(Run).where(Run.id.in_(ids)))} if ids else {}
+        return [case_dict(case, runs.get(case.active_run_id)) for case in cases]
 
 
 @app.post('/api/cases', status_code=201)
@@ -154,6 +184,10 @@ def clear_cases(body: ClearCases):
                 if batch.active_key:
                     raise HTTPException(409, 'Дождитесь завершения проверки всего каталога тестовых кейсов.')
         directories = []
+        case_documents = session.scalars(select(Document).where(Document.case_id.in_(ids))).all()
+        document_hashes = {doc.sha256 for doc in case_documents}
+        if not body.delete_unlinked_documents:
+            sync_assets(session, case_documents)
         for case_id in ids:
             directory = DATA / case_id
             if directory.is_symlink() or directory.resolve().parent != DATA.resolve():
@@ -163,6 +197,9 @@ def clear_cases(body: ClearCases):
         for model in (Review, Run, Document):
             session.execute(delete(model).where(model.case_id.in_(ids)))
         session.execute(delete(Case).where(Case.id.in_(ids)))
+        session.flush()
+        if body.delete_unlinked_documents:
+            remove_unused_assets(session, document_hashes)
     cleanup_failed = []
     for case_id, directory in directories:
         try:
@@ -172,6 +209,65 @@ def clear_cases(body: ClearCases):
             logging.getLogger(__name__).exception('Could not remove files for deleted case %s', case_id)
             cleanup_failed.append(case_id)
     return {'deleted_ids': ids, 'cleanup_failed': cleanup_failed}
+
+
+@app.get('/api/documents')
+def list_workspace_documents():
+    with Session.begin() as session:
+        return asset_catalog(session)
+
+
+@app.delete('/api/documents/unlinked')
+def delete_unlinked_documents():
+    with Session.begin() as session:
+        if session.get_bind().dialect.name == 'sqlite':
+            session.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        return {'deleted_ids': remove_unused_assets(session)}
+
+
+@app.get('/api/documents/{document_id}/original')
+def workspace_document_original(document_id: str):
+    with Session() as session:
+        asset = session.get(DocumentAsset, document_id)
+        if not asset or not Path(asset.path).is_file():
+            raise HTTPException(404, 'Оригинал документа недоступен')
+        return FileResponse(asset.path, filename=asset.name)
+
+
+@app.post('/api/cases/{case_id}/copy', status_code=201)
+def copy_case(case_id: str, body: CopyCase):
+    created_directory = None
+    try:
+        with Session.begin() as session:
+            source = get_case(session, case_id)
+            writable(source)
+            context = body.model_dump(mode='json', exclude={'title', 'document_ids'})
+            context.update(row_label=f'{body.stage} этап, {body.period_start.year} г.', copied_from=case_id)
+            target = Case(title=body.title, context=context)
+            session.add(target)
+            session.flush()
+            created_directory = DATA/target.id
+            copy_case_documents(session, source, target, [str(value) for value in body.document_ids])
+            return case_dict(target)
+    except Exception:
+        if created_directory and created_directory.resolve().parent == DATA.resolve() and not created_directory.is_symlink():
+            shutil.rmtree(created_directory, ignore_errors=True)
+        raise
+
+
+@app.get('/api/cases/{case_id}/package.zip')
+def download_case_package(case_id: str):
+    with Session() as session:
+        case = get_case(session, case_id)
+        writable(case)
+        docs = session.scalars(select(Document).where(Document.case_id == case_id)).all()
+        run = session.get(Run, case.active_run_id) if case.active_run_id else None
+        payload = run.payload if run else None
+        if payload is None:
+            raise HTTPException(409, 'Сначала завершите сверку: пакет должен содержать готовый отчёт.')
+        content = case_package(case, docs, payload, build_cost_tree(case.context, payload))
+        return FileResponse(content, media_type='application/zip', filename=f'sverka-{case.id}.zip',
+                            background=BackgroundTask(content.unlink, missing_ok=True))
 
 
 @app.post('/api/reports/context')
@@ -205,12 +301,23 @@ def read_case(case_id: str):
         docs = session.scalars(select(Document).where(Document.case_id == case_id).order_by(Document.name)).all()
         runs = session.scalars(select(Run).where(Run.case_id == case_id).order_by(Run.created_at.desc())).all()
         reviews = session.scalars(select(Review).where(Review.case_id == case_id).order_by(Review.created_at)).all()
-        result = next((r.payload for r in runs if r.id == case.active_run_id), None)
+        active_run = next((r for r in runs if r.id == case.active_run_id), None)
+        result = active_run.payload if active_run else None
         comparison = compare_fixture(case.context['fixture_id'], result) if case.context.get('fixture_id') and result else None
-        return {**case_dict(case), 'documents': [document_dict(d) for d in docs],
-                'runs': [{'id': r.id, 'created_at': r.created_at.isoformat(), 'status': r.status, 'progress': r.progress, 'message': r.message} for r in runs],
-                'result': result, 'fixture_comparison': comparison,
-                'reviews': [{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'before': r.before, 'reason': r.reason, 'created_at': r.created_at.isoformat()} for r in reviews]}
+        return {**case_dict(case, active_run), 'documents': [document_dict(d) for d in docs],
+                'runs': [{'id': r.id, 'created_at': iso_timestamp(r.created_at), 'status': r.status, 'progress': r.progress, 'message': r.message, **run_timing(r)} for r in runs],
+                'result': result, 'fixture_comparison': comparison, 'cost_tree': build_cost_tree(case.context, result),
+                'reviews': [{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'before': r.before, 'reason': r.reason, 'created_at': iso_timestamp(r.created_at)} for r in reviews]}
+
+
+@app.get('/api/cases/{case_id}/cost-tree')
+def read_cost_tree(case_id: str, include_out_of_scope: bool = False):
+    with Session() as session:
+        case = get_case(session, case_id)
+        run = session.get(Run, case.active_run_id) if case.active_run_id else None
+        result = run.payload if run else None
+        return {'run_id': case.active_run_id,
+                'tree': build_cost_tree(case.context, result, include_out_of_scope=include_out_of_scope)}
 
 
 @app.post('/api/cases/{case_id}/documents', status_code=201)
@@ -301,7 +408,71 @@ def review(case_id: str, document_id: str, body: Correction):
                        before={k: effective.get(k) for k in changes}, reason=body.reason)
         session.add(event)
         session.flush()
-        run = enqueue(session, case)
+        try:
+            run = enqueue(session, case)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return {'review_id': event.id, 'run_id': run.id}
+
+
+@app.post('/api/cases/{case_id}/documents/{document_id}/report-review', status_code=201)
+def review_report(case_id: str, document_id: str, body: ReportCorrection):
+    with Session.begin() as session:
+        case = get_case(session, case_id)
+        writable(case)
+        doc = get_document(session, case_id, document_id)
+        if doc.role != 'report':
+            raise HTTPException(400, 'Уточнение КФЗ доступно только для главного отчёта')
+        if not body.report_values and not body.cost_cells and body.contract is None:
+            raise HTTPException(400, 'Укажите хотя бы одно изменение')
+        if len(body.reason.strip()) < 5:
+            raise HTTPException(422, 'Укажите причину уточнения')
+        values, cells = {}, []
+        try:
+            for code, amount in body.report_values.items():
+                if len(amount) > 64:
+                    raise ValueError('Слишком длинная сумма')
+                values[code] = parse_amount(amount)
+            seen = set()
+            for cell in body.cost_cells:
+                if cell.year != int(case.context['period_start'][:4]):
+                    raise ValueError('Уточняйте только год выбранного периода проверки')
+                if cell.column in seen:
+                    raise ValueError('Одна ячейка указана несколько раз')
+                seen.add(cell.column)
+                amount = parse_amount(cell.amount)
+                code = next((code for code, column in DIRECT_COLUMNS.items() if column == cell.column), None)
+                if code:
+                    if code in values and values[code] != amount:
+                        raise ValueError('Итог статьи и значение её единственной колонки должны совпадать')
+                    values[code] = amount
+                cells.append({'year': cell.year, 'column': cell.column, 'amount': amount})
+        except (ValueError, ArithmeticError) as exc:
+            raise HTTPException(422, str(exc)) from None
+        changes = {'report_values': values, 'cost_cells': cells}
+        if body.contract is not None:
+            contract = body.contract.strip()
+            if not contract:
+                raise HTTPException(422, 'Укажите договор из оригинала КФЗ')
+            changes['contract'] = contract
+        effective = document_dict(doc)
+        prior = session.scalars(select(Review).where(Review.document_id == doc.id).order_by(Review.created_at, Review.id)).all()
+        for item in prior:
+            apply_document_changes(effective, item.changes, case.context)
+        fact = effective.get('extraction') or {}
+        year = int(case.context['period_start'][:4])
+        row = next((row for row in fact.get('cost_rows', []) if row['stage'] == case.context['stage'] and row['year'] == year), {})
+        before = {'report_values': {code: fact.get('report_values', {}).get(code) for code in values},
+                  'cost_cells': [{**cell, 'amount': row.get('values', {}).get(cell['column'])} for cell in cells]}
+        if 'contract' in changes:
+            before['contract'] = fact.get('contract')
+        event = Review(case_id=case_id, document_id=document_id, changes=changes, before=before, reason=body.reason.strip())
+        session.add(event)
+        session.flush()
+        try:
+            run = enqueue(session, case)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
         return {'review_id': event.id, 'run_id': run.id}
 
 

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "purpose": "OCR recognition only; no reconciliation-category support is implied",
+  "cases": [
+    {
+      "id": "real_kfz_reduced_quality",
+      "manifest": "real_kfz_reduced_quality/case.json"
+    },
+    {
+      "id": "0400_0700_clear",
+      "manifest": "0400_0700_clear/case.json"
+    },
+    {
+      "id": "0400_0700_reduced",
+      "manifest": "0400_0700_reduced/case.json"
+    },
+    {
+      "id": "1000_1300_clear",
+      "manifest": "1000_1300_clear/case.json"
+    },
+    {
+      "id": "1000_1300_reduced",
+      "manifest": "1000_1300_reduced/case.json"
+    },
+    {
+      "id": "1300_13000_clear",
+      "manifest": "1300_13000_clear/case.json"
+    },
+    {
+      "id": "1300_13000_reduced",
+      "manifest": "1300_13000_reduced/case.json"
+    },
+    {
+      "id": "leading_zeros_clear",
+      "manifest": "leading_zeros_clear/case.json"
+    },
+    {
+      "id": "leading_zeros_reduced",
+      "manifest": "leading_zeros_reduced/case.json"
+    }
+  ]
+}

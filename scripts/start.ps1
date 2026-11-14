@@ -6,6 +6,45 @@ if (-not (Test-Path -LiteralPath $pythonExecutable)) {
     throw 'Сначала создайте .venv и установите зависимости по README.md'
 }
 
+# An existing venv launcher can still point to a removed base interpreter.
+# Probe the executable itself before rebuilding the UI or announcing the server.
+$pythonProbe = [System.Diagnostics.Process]::new()
+try {
+    $pythonProbe.StartInfo.FileName = $pythonExecutable
+    $pythonProbe.StartInfo.Arguments = '-c "import json,struct,sys; print(json.dumps(dict(version=list(sys.version_info[:3]),bits=struct.calcsize(chr(80))*8,executable=sys.executable,prefix=sys.prefix,base_prefix=sys.base_prefix)))"'
+    $pythonProbe.StartInfo.WorkingDirectory = $projectRoot
+    $pythonProbe.StartInfo.UseShellExecute = $false
+    $pythonProbe.StartInfo.CreateNoWindow = $true
+    $pythonProbe.StartInfo.RedirectStandardOutput = $true
+    $pythonProbe.StartInfo.RedirectStandardError = $true
+    $pythonProbe.StartInfo.EnvironmentVariables['PYTHONUTF8'] = '1'
+    $pythonProbe.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $pythonProbe.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    [void]$pythonProbe.Start()
+    $pythonOutput = $pythonProbe.StandardOutput.ReadToEndAsync()
+    $pythonError = $pythonProbe.StandardError.ReadToEndAsync()
+    if (-not $pythonProbe.WaitForExit(15000)) {
+        $pythonProbe.Kill()
+        throw 'Python не ответил за 15 секунд.'
+    }
+    if ($pythonProbe.ExitCode -ne 0) {
+        throw $pythonError.GetAwaiter().GetResult().Trim()
+    }
+    $pythonInfo = $pythonOutput.GetAwaiter().GetResult() | ConvertFrom-Json
+    $expectedVenv = [System.IO.Path]::GetFullPath((Join-Path $projectRoot '.venv'))
+    if ([System.IO.Path]::GetFullPath($pythonInfo.prefix) -ne $expectedVenv -or $pythonInfo.prefix -eq $pythonInfo.base_prefix) {
+        throw 'Интерпретатор запущен вне окружения .venv этого проекта.'
+    }
+    if ($pythonInfo.version[0] -ne 3 -or $pythonInfo.version[1] -ne 12 -or $pythonInfo.bits -ne 64) {
+        throw 'Для проекта требуется Python 3.12 x64. Пересоздайте .venv по разделу 1.4 README.md.'
+    }
+} catch {
+    throw "Не удалось запустить Python из .venv. Причина: $($_.Exception.Message)`nПроверьте базовый Python в .venv\pyvenv.cfg. Если он удалён, восстановите окружение установленным Python 3.12 x64: py -3.12 -m venv --upgrade .venv. Подробности: README.md, раздел 1.8."
+} finally {
+    $pythonProbe.Dispose()
+}
+Write-Host ('Python проекта: {0} (Python {1}, x64)' -f $pythonInfo.executable, ($pythonInfo.version -join '.'))
+
 # Choose access on first installation; keep the existing selection on later runs.
 try {
     # PowerShell 5.1 must forward the whole argparse error, including the remedy.

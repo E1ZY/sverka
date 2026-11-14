@@ -1,0 +1,23 @@
+# GPU hosts: copy this file to compose.override.yaml once, then use plain Compose.
+# Optional scripts/start_docker.py can also select this file after its CUDA probe.
+services:
+  api:
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+  worker:
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

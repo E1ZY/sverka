@@ -1,0 +1,569 @@
+import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, FileText } from "lucide-react";
+import { Column } from "primereact/column";
+import { addLocale, PrimeReactProvider } from "primereact/api";
+import { TreeTable, type TreeTableExpandedKeysType } from "primereact/treetable";
+import type { TreeNode as PrimeTreeNode } from "primereact/treenode";
+import { authFetch } from "./auth";
+
+const tableLocale = { aria: { expandLabel: "Развернуть строку", collapseLabel: "Свернуть строку", expandRow: "Развернуть строку", collapseRow: "Свернуть строку" } };
+addLocale("sverka-ru", tableLocale);
+const tableOptions = { locale: "sverka-ru" };
+
+type Evidence = {
+  text: string;
+  page?: number;
+  bbox?: number[];
+  sheet?: string;
+  range?: string;
+  confidence?: number;
+};
+type Source = {
+  document_id: string;
+  name: string;
+  amount: string;
+  evidence?: Evidence;
+};
+type TreeNode = {
+  id: string;
+  name: string;
+  code?: string;
+  actual: string | null;
+  expected: string | null;
+  delta?: string | null;
+  status: string;
+  confirmed_subtotal?: string | null;
+  allocation?: boolean;
+  children: TreeNode[];
+  sources: Source[];
+  reason?: string;
+  reference?: boolean;
+  evidence?: Evidence;
+  report_id?: string;
+};
+type Metadata = Record<
+  string,
+  { label: string; value: string | null; status: string; evidence?: Evidence }
+>;
+type Validation = {
+  id: string;
+  name: string;
+  role: string;
+  article: string | null;
+  period: string;
+  amount: string | null;
+  accepted: boolean;
+  verdict: string;
+  reason: string;
+  metadata: Metadata;
+  checks: {
+    field: string;
+    value: string | null;
+    expected: string | null;
+    status: string;
+  }[];
+};
+export type TreeSnapshot = {
+  root: TreeNode;
+  metadata: Metadata;
+  note: string;
+  document_validation: Validation[];
+  outside_periods?: number[];
+  include_out_of_scope?: boolean;
+  period_start?: string;
+  period_end?: string;
+};
+const rub = (value: string | null | undefined) =>
+  value == null
+    ? "—"
+    : new Intl.NumberFormat("ru-RU", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(Number(value));
+const labels: Record<string, string> = {
+  MATCH: "Обосновано",
+  MISMATCH: "Расхождение",
+  INSUFFICIENT_DATA: "Непроверено",
+  UNALLOCATED: "Не распределено",
+  OUT_OF_SCOPE: "Вне проверки",
+};
+const groups: Record<string, string> = {
+  "0200": "Оплата труда",
+  "0300": "Страховые взносы",
+  "0800": "Общепроизводственные затраты",
+  "0900": "Общехозяйственные затраты",
+  unknown: "Статья не определена",
+};
+
+function MetadataTable({
+  metadata,
+  onSource,
+  reportId,
+}: {
+  metadata: Metadata;
+  onSource: (id: string, evidence?: Evidence) => void;
+  reportId?: string;
+}) {
+  return (
+    <table className="register-table metadata-table">
+      <thead>
+        <tr>
+          <th>Поле</th>
+          <th>Значение из карточки</th>
+          <th>Источник</th>
+        </tr>
+      </thead>
+      <tbody>
+        {Object.entries(metadata).map(([key, item]) => (
+          <tr key={key}>
+            <td>{item.label}</td>
+            <td>
+              {item.value || (
+                <span className="subtle">
+                  {item.status === "ambiguous"
+                    ? "Найдено несколько значений"
+                    : "Не найдено в документе"}
+                </span>
+              )}
+              {item.status === "uncertain" && (
+                <small className="metadata-uncertain">
+                  Проверьте распознавание
+                </small>
+              )}
+            </td>
+            <td>
+              {item.value && item.evidence && reportId && (
+                <button
+                  className="text-button"
+                  onClick={() => onSource(reportId, item.evidence)}
+                >
+                  <FileText size={14} />
+                  Страница {item.evidence.page || 1}
+                </button>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function DocumentsTree({
+  items,
+  onSource,
+}: {
+  items: Validation[];
+  onSource: (id: string, evidence?: Evidence) => void;
+}) {
+  const [closed, setClosed] = useState(new Set<string>());
+  const [selected, setSelected] = useState<Validation | null>(null);
+  const [verdict, setVerdict] = useState("all");
+  const primary = items.filter(item => item.role === "primary");
+  const acceptedCount = primary.filter(item => item.accepted).length;
+  const toggle = (id: string) =>
+    setClosed((current) => {
+      const next = new Set(current);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  const grouped = new Map<string, Map<string, Validation[]>>();
+  for (const item of primary.filter(item => verdict === "all" || item.accepted === (verdict === "accepted"))) {
+    const category = item.article || "unknown";
+    if (!grouped.has(category)) grouped.set(category, new Map());
+    const periods = grouped.get(category)!;
+    periods.set(item.period, [...(periods.get(item.period) || []), item]);
+  }
+  return (
+    <>
+      <p className="tree-explanation">
+        Все входящие документы остаются в дереве. В расчёт включаются только
+        принятые документы. Суммы отклонённых документов в итог не входят.
+      </p>
+      <div className="register-toolbar"><div className="filters" aria-label="Решение по документам">{[["all", `Все (${primary.length})`], ["accepted", `Принято (${acceptedCount})`], ["rejected", `Отклонено (${primary.length-acceptedCount})`]].map(([key,label])=><button key={key} className={verdict===key?"active":""} aria-pressed={verdict===key} onClick={()=>{setVerdict(key); setSelected(null);}}>{label}</button>)}</div></div>
+      <div className="register-scroll">
+        <table className="register-table intake-tree">
+          <thead>
+            <tr>
+              <th>Отчётные документы</th>
+              <th>Сумма, ₽</th>
+              <th>Проверенные признаки</th>
+              <th>Решение и причина</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...grouped].map(([code, periods]) => {
+              const docs = [...periods.values()].flat(),
+                rejected = docs.filter((item) => !item.accepted).length;
+              return (
+                <TreeGroup
+                  key={code}
+                  code={code}
+                  periods={periods}
+                  rejected={rejected}
+                  closed={closed}
+                  toggle={toggle}
+                  onSelect={setSelected}
+                  onSource={onSource}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {selected && (
+        <section className="metadata-detail">
+          <div className="panel-heading">
+            <h3>{selected.name}</h3>
+            <button className="text-button" onClick={() => setSelected(null)}>
+              Скрыть признаки
+            </button>
+          </div>
+          <table className="register-table">
+            <thead>
+              <tr>
+                <th>Признак</th>
+                <th>В документе</th>
+                <th>В главном отчёте / параметрах</th>
+                <th>Проверка</th>
+              </tr>
+            </thead>
+            <tbody>
+              {selected.checks.map((check) => (
+                <tr key={check.field}>
+                  <td>{check.field}</td>
+                  <td>{check.value || "Не найдено"}</td>
+                  <td>{check.expected || "Не найдено"}</td>
+                  <td>
+                    {check.status === "MATCH"
+                      ? "Совпадает"
+                      : check.status === "MISSING"
+                        ? "Недостаточно данных"
+                        : check.status === "NOT_COMPARABLE"
+                          ? "Иная роль в операции — нужно сопоставление сторон"
+                          : check.status === "EXTRACTED" ? "Извлечено из документа"
+                          : check.status === "UNCERTAIN" ? "Проверьте распознавание"
+                          : "Не соответствует"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <MetadataTable
+            metadata={selected.metadata}
+            reportId={selected.id}
+            onSource={onSource}
+          />
+        </section>
+      )}
+    </>
+  );
+}
+
+function TreeGroup({
+  code,
+  periods,
+  rejected,
+  closed,
+  toggle,
+  onSelect,
+  onSource,
+}: {
+  code: string;
+  periods: Map<string, Validation[]>;
+  rejected: number;
+  closed: Set<string>;
+  toggle: (id: string) => void;
+  onSelect: (value: Validation) => void;
+  onSource: (id: string) => void;
+}) {
+  return (
+    <>
+      <tr className={"intake-group " + (rejected ? "rejected" : "accepted")}>
+        <td colSpan={3}>
+          <button
+            className="tree-toggle"
+            aria-expanded={!closed.has(code)}
+            onClick={() => toggle(code)}
+          >
+            {closed.has(code) ? (
+              <ChevronRight size={16} />
+            ) : (
+              <ChevronDown size={16} />
+            )}
+            <strong>{groups[code] || code}</strong>
+          </button>
+        </td>
+        <td>
+          {rejected
+            ? `Отклонено документов: ${rejected}`
+            : "Все документы приняты"}
+        </td>
+      </tr>
+      {!closed.has(code) &&
+        [...periods].sort(([left], [right])=>left.localeCompare(right)).map(([period, docs]) => (
+          <tr key={period}>
+            <td colSpan={4} className="intake-period-cell">
+              <details open>
+                <summary>{period}</summary>
+                <table className="register-table">
+                  <tbody>
+                    {docs.map((item) => (
+                      <tr
+                        key={item.id}
+                        className={item.accepted ? "accepted" : "rejected"}
+                      >
+                        <td>
+                          <button
+                            className="text-button"
+                            onClick={() => onSource(item.id)}
+                          >
+                            {item.name}
+                          </button>
+                        </td>
+                        <td className="money">{rub(item.amount)}</td>
+                        <td>
+                          <button
+                            className="text-button"
+                            onClick={() => onSelect(item)}
+                          >
+                            Признаки проверки
+                          </button>
+                        </td>
+                        <td>
+                          <strong>{item.verdict}</strong>
+                          <p>{item.reason}</p>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </details>
+            </td>
+          </tr>
+        ))}
+    </>
+  );
+}
+
+export function CostTreePanel({
+  tree: initialTree,
+  caseId,
+  runId,
+  onSource,
+}: {
+  tree: TreeSnapshot;
+  caseId: string;
+  runId?: string;
+  onSource: (id: string, evidence?: Evidence) => void;
+}) {
+  const [tab, setTab] = useState("costs"),
+    [view, setView] = useState("compare"),
+    [issues, setIssues] = useState(false),
+    [includeOutOfScope, setIncludeOutOfScope] = useState(false),
+    [extendedTree, setExtendedTree] = useState<TreeSnapshot | null>(null),
+    [scopeLoading, setScopeLoading] = useState(false),
+    [scopeError, setScopeError] = useState("");
+  const tree = includeOutOfScope && extendedTree ? extendedTree : initialTree;
+  useEffect(() => {
+    if (!includeOutOfScope) {
+      setScopeLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setScopeLoading(true);
+    setScopeError("");
+    authFetch(`/api/cases/${caseId}/cost-tree?include_out_of_scope=true`, { signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) throw new Error("Не удалось загрузить периоды вне проверки. Снимите галочку и попробуйте ещё раз.");
+        const data = await response.json() as { run_id: string; tree: TreeSnapshot | null };
+        if (runId && data.run_id !== runId) throw new Error("Результат проверки обновился. Обновите страницу.");
+        if (!controller.signal.aborted) setExtendedTree(data.tree);
+      })
+      .catch(error => { if (!controller.signal.aborted) setScopeError((error as Error).message); })
+      .finally(() => { if (!controller.signal.aborted) setScopeLoading(false); });
+    return () => controller.abort();
+  }, [includeOutOfScope, caseId, runId]);
+  const [expanded, setExpanded] = useState(
+    Object.fromEntries(["stage", ...tree.root.children.map((child) => child.id)].map(id => [id, true])) as TreeTableExpandedKeysType,
+  );
+  const toTableNode = (node: TreeNode): PrimeTreeNode | null => {
+    // Also hide reference rows when viewing a response from an older server.
+    if (node.reference || node.status === "REFERENCE" || (view === "claimed" && node.allocation)) return null;
+    const children = node.children.map(toTableNode).filter((child): child is PrimeTreeNode => child !== null);
+    if (issues && ["MATCH", "OUT_OF_SCOPE"].includes(node.status) && !children.length) return null;
+    return { key: node.id, data: node, children, leaf: !children.length };
+  };
+  const root = toTableNode(tree.root);
+  const report = tree.document_validation.find(
+    (item) => item.role === "report",
+  );
+  const allNodes = (node: TreeNode): string[] => node.children.length ? [node.id, ...node.children.flatMap(allNodes)] : [];
+  return (
+    <section className="panel cost-tree-panel">
+      <div className="tree-tabs" aria-label="Представление результата">
+        {[
+          ["costs", "Деревья затрат"],
+          ["incoming", "Дерево отчётности"],
+          ["metadata", "Метаданные карточки"],
+          ["log", "Журнал решений"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            className={tab === value ? "active" : ""}
+            onClick={() => setTab(value)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "costs" && (
+        <>
+          <div className="register-toolbar">
+            <div className="tree-views">
+              {[
+                ["compare", "Сравнение деревьев"],
+                ["claimed", "Заявленные затраты"],
+                ["confirmed", "Подтверждённые затраты"],
+              ].map(([value, label]) => (
+                <button
+                  className={view === value ? "active" : ""}
+                  key={value}
+                  onClick={() => setView(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button
+              className="text-button"
+              onClick={() => setExpanded(Object.fromEntries(allNodes(tree.root).map(id => [id, true])))}
+            >
+              Развернуть всё
+            </button>
+            <button
+              className="text-button"
+              onClick={() => setExpanded({ stage: true })}
+            >
+              Свернуть
+            </button>
+            <label className="tree-issues">
+              <input
+                type="checkbox"
+                checked={issues}
+                onChange={(event) => {
+                  setIssues(event.target.checked);
+                  if (event.target.checked) setExpanded(Object.fromEntries(allNodes(tree.root).map(id => [id, true])));
+                }}
+              />
+              Только проблемы
+            </label>
+            {!!initialTree.outside_periods?.length && <label className="tree-issues">
+              <input type="checkbox" checked={includeOutOfScope}
+                onChange={event => { setScopeError(""); setIncludeOutOfScope(event.target.checked); }} />
+              Показать периоды вне проверки
+            </label>}
+          </div>
+          {tree.period_start && tree.period_end && <p className="tree-scope-label">
+            Период проверки: <strong>{tree.period_start.split("-").reverse().join(".")} — {tree.period_end.split("-").reverse().join(".")}</strong>.
+            {tree.include_out_of_scope ? " Показаны также годы вне проверки; их суммы включены в итоги этапа." : " Итоги дерева включают только год выбранного периода."}
+          </p>}
+          {scopeLoading && <p className="tree-explanation" role="status">Загружаем периоды вне проверки…</p>}
+          {scopeError && <p className="form-error" role="alert">{scopeError}</p>}
+          <div className="tree-legend">
+            <span className="MATCH">Обосновано · 1</span>
+            <span className="INSUFFICIENT_DATA">Непроверено / нет разбивки · 2</span>
+            <span className="MISMATCH">Расхождение · 3</span>
+            {tree.include_out_of_scope && <span className="OUT_OF_SCOPE">Вне проверки</span>}
+            <small>
+              Красный — выявлено расхождение. Жёлтый — данных недостаточно. Родитель наследует самый строгий статус.
+            </small>
+          </div>
+          <PrimeReactProvider value={tableOptions}><TreeTable
+            value={root ? [root] : []}
+            expandedKeys={expanded}
+            onToggle={(event) => setExpanded(event.value)}
+            unstyled
+            className="cost-tree-widget register-scroll"
+            tableClassName="register-table cost-tree"
+            rowClassName={(node) => ({ [node.data.status]: true })}
+            pt={{ root: { role: "presentation" }, table: { role: "treegrid", "aria-label": "Дерево затрат" }, rowToggler: { className: "cost-node-toggle" } }}
+            emptyMessage="Проблем с выбранными условиями нет"
+          >
+            <Column field="name" header="Этап → категория → подкатегория → период" expander
+              body={(item: PrimeTreeNode) => <span className="cost-node-label">
+                {item.data.code && <small>{item.data.code}</small>}{item.data.name}
+              </span>} />
+            {view !== "confirmed" && <Column header="Заявлено, ₽" bodyClassName="money" body={(item: PrimeTreeNode) => {
+              const node = item.data as TreeNode;
+              return node.evidence && node.report_id ? <button title="Показать сумму в главном отчёте"
+                onClick={() => onSource(node.report_id!, node.evidence)}>{rub(node.actual)}</button> : rub(node.actual);
+            }} />}
+            {view !== "claimed" && <Column header="По документам, ₽" bodyClassName="money" body={(item: PrimeTreeNode) => {
+              const node = item.data as TreeNode;
+              return <>{rub(node.expected ?? node.confirmed_subtotal)}
+                {node.expected == null && node.confirmed_subtotal != null && <small className="partial-amount">Подтверждено частично</small>}</>;
+            }} />}
+            {view === "compare" && <Column header="Разница, ₽" bodyClassName="money" body={(item: PrimeTreeNode) => rub(item.data.delta)} />}
+            <Column header="Обоснованность" body={(item: PrimeTreeNode) => <>
+              <span className="tree-status">{labels[item.data.status]}</span>
+              {item.data.reason && <small className="tree-reason">{item.data.reason}</small>}
+            </>} />
+            <Column header="Подтверждающая запись" body={(item: PrimeTreeNode) => {
+              const node = item.data as TreeNode;
+              return node.status !== "INSUFFICIENT_DATA" && node.sources.map((source) =>
+                <button key={source.document_id} className="tree-source" onClick={() => onSource(source.document_id, source.evidence)}>
+                  {source.name}{source.evidence?.sheet ? ` · ${source.evidence.sheet}!${source.evidence.range}` : ` · стр. ${source.evidence?.page || 1}`} · {rub(source.amount)} ₽
+                </button>);
+            }} />
+          </TreeTable></PrimeReactProvider>
+          <p className="tree-explanation">{tree.note}</p>
+        </>
+      )}
+      {tab === "incoming" && (
+        <DocumentsTree items={tree.document_validation} onSource={onSource} />
+      )}
+      {tab === "metadata" && (
+        <MetadataTable
+          metadata={tree.metadata}
+          reportId={report?.id}
+          onSource={onSource}
+        />
+      )}
+      {tab === "log" && (
+        <div className="register-scroll">
+          <table className="register-table">
+            <thead>
+              <tr>
+                <th>Документ</th>
+                <th>Период</th>
+                <th>Решение</th>
+                <th>Основание решения</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tree.document_validation.map((item) => (
+                <tr
+                  key={item.id}
+                  className={item.accepted ? "accepted" : "rejected"}
+                >
+                  <td>
+                    <button
+                      className="text-button"
+                      onClick={() => onSource(item.id)}
+                    >
+                      {item.name}
+                    </button>
+                  </td>
+                  <td>{item.period}</td>
+                  <td>{item.verdict}</td>
+                  <td>{item.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}

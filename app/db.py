@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, event
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 from .config import DATABASE_URL
@@ -26,6 +26,7 @@ class Case(Base):
     context: Mapped[dict] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(30), default='draft')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=now)
     active_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
 
@@ -41,11 +42,28 @@ class Document(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class DocumentAsset(Base):
+    """Retained original, independent of any one case; links use Document.sha256."""
+    __tablename__ = 'document_assets'
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    path: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+@event.listens_for(Case.status, 'set')
+def record_status_change(case, value, previous, initiator):
+    if value != previous:
+        case.status_changed_at = now()
+
+
 class Run(Base):
     __tablename__ = 'runs'
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     case_id: Mapped[str] = mapped_column(ForeignKey('cases.id'), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default='queued')
     progress: Mapped[int] = mapped_column(Integer, default=0)
     message: Mapped[str] = mapped_column(Text, default='Ожидает обработки')
@@ -95,3 +113,13 @@ Session = sessionmaker(engine, expire_on_commit=False)
 
 def init_db():
     Base.metadata.create_all(engine)
+    # Additive migration for existing SQLite/PostgreSQL installations; no data reset.
+    if 'status_changed_at' not in {column['name'] for column in inspect(engine).get_columns('cases')}:
+        with engine.begin() as connection:
+            connection.execute(text('ALTER TABLE cases ADD COLUMN status_changed_at TIMESTAMP'))
+    run_columns = {column['name'] for column in inspect(engine).get_columns('runs')}
+    time_type = DateTime(timezone=True).compile(dialect=engine.dialect)
+    with engine.begin() as connection:
+        for name in ('started_at', 'finished_at'):
+            if name not in run_columns:
+                connection.execute(text(f'ALTER TABLE runs ADD COLUMN {name} {time_type}'))

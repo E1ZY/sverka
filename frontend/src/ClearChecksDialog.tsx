@@ -9,10 +9,11 @@ export function ClearChecksDialog({ count, activeCount, caseTitle, caseId, onClo
   caseTitle?: string;
   caseId?: string;
   onClose: () => void;
-  onConfirm: () => Promise<void>;
+  onConfirm: (deleteUnlinked: boolean) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [deleteUnlinked, setDeleteUnlinked] = useState(true);
   const single = caseTitle !== undefined;
   const dialog = useDialog(onClose, busy);
   const confirm = async () => {
@@ -20,7 +21,7 @@ export function ClearChecksDialog({ count, activeCount, caseTitle, caseId, onClo
     setBusy(true);
     setError("");
     try {
-      await onConfirm();
+      await onConfirm(deleteUnlinked);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -37,8 +38,9 @@ export function ClearChecksDialog({ count, activeCount, caseTitle, caseId, onClo
       <h2 id="clear-checks-title">{single ? "Удалить проверку?" : "Очистить последние проверки?"}</h2>
       {single && caseId && <div className="delete-check-id"><CaseId id={caseId} /></div>}
       <p id="clear-checks-warning">{single
-        ? <>Будет удалена проверка <strong className="delete-check-name">«{caseTitle}»</strong> вместе с загруженными копиями документов, результатами и историей запусков. <strong>Восстановить её не получится.</strong></>
-        : <>Будут удалены проверки из списка последних: <strong>{count}</strong>, а также их загруженные копии документов, результаты и история запусков. <strong>Восстановить их не получится.</strong></>}</p>
+        ? <>Будет удалена сверка <strong className="delete-check-name">«{caseTitle}»</strong> с результатами и историей запусков. <strong>Восстановить её не получится.</strong></>
+        : <>Будут удалены сверки: <strong>{count}</strong>, их результаты и история запусков. <strong>Восстановить их не получится.</strong></>}</p>
+      <label className="checkbox"><input type="checkbox" checked={deleteUnlinked} disabled={busy} onChange={event=>setDeleteUnlinked(event.target.checked)}/><span>Также удалить документы, не участвующие в других сверках<small>Если снять отметку, документы останутся в общем реестре без связанных сверок.</small></span></label>
       <p className="muted">Исходные файлы на вашем компьютере сохранятся.</p>
       {activeCount > 0 && <p className="notice">Выполняющиеся проверки останутся в списке: {activeCount}.</p>}
       {error && <p className="form-error" role="alert"><CircleAlert size={17} />{error}</p>}

@@ -3,12 +3,16 @@ import logging
 import time
 from datetime import timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 
 from .config import PIPELINE_VERSION
 from .db import Case, Document, Review, Run, Session, engine, init_db, now
 from .domain import RULES, reconcile
 from .extractors import REPORT_PARSER_VERSION, extract_primary, extract_report
+from .document_validation import validation_log
+from .timing import run_timing
+from .report_corrections import apply_document_changes
+from . import ocr
 
 log = logging.getLogger(__name__)
 
@@ -20,12 +24,17 @@ def document_dict(doc):
 def enqueue(session, case):
     if case.status in {'queued', 'running'}:
         raise ValueError('Проверка уже выполняется')
+    # The condition is checked by the database, including when two requests read
+    # the same completed case before either one has queued its new run.
+    reserved = session.execute(update(Case).where(Case.id == case.id, Case.status.not_in(['queued', 'running']))
+        .values(status='queued', status_changed_at=now())).rowcount
+    if reserved != 1:
+        raise ValueError('Проверка уже выполняется')
     reviews = session.scalars(select(Review).where(Review.case_id == case.id).order_by(Review.created_at, Review.id)).all()
     run = Run(case_id=case.id, review_snapshot=[{'id': r.id, 'document_id': r.document_id, 'changes': r.changes, 'reason': r.reason} for r in reviews])
     session.add(run)
     session.flush()
     case.active_run_id = run.id
-    case.status = 'queued'
     return run
 
 
@@ -39,9 +48,12 @@ def claim():
             return None
         if run.attempts >= 3:
             run.status, run.message = 'failed', 'Обработка прервана три раза. Запустите новую проверку.'
+            run.finished_at = now()
             session.get(Case, run.case_id).status = 'failed'
             return None
         run.status, run.lease_until = 'running', now() + timedelta(minutes=10)
+        run.started_at = run.started_at or now()
+        run.finished_at = None
         run.attempts += 1
         session.get(Case, run.case_id).status = 'running'
         return run.id
@@ -51,27 +63,38 @@ def process(run_id):
     try:
         with Session() as session:
             run = session.get(Run, run_id)
+            run.started_at = run.started_at or now()
             case = session.get(Case, run.case_id)
             context = copy.deepcopy(case.context)
             docs = session.scalars(select(Document).where(Document.case_id == case.id).order_by(Document.name, Document.id)).all()
             reviews = copy.deepcopy(run.review_snapshot)
             cache = {}
+            ocr_signature = ocr.signature()
             for i, doc in enumerate(docs):
                 run.message = f'Извлечение {i+1}/{len(docs)}: {doc.name}'
                 run.progress = int(i / max(1, len(docs)) * 85)
                 run.lease_until = now() + timedelta(minutes=10)
                 session.commit()
                 key = (doc.sha256, doc.role)
-                if doc.extraction is None or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION):
+                def report_progress(message, fraction):
+                    run.message = f'Извлечение {i+1}/{len(docs)}: {doc.name} · {message}'
+                    fraction = max(0., min(1., fraction))
+                    overall = int((i + fraction) / max(1, len(docs)) * 85)
+                    run.progress = max(run.progress, min(84, max(1, overall)))
+                    run.lease_until = now() + timedelta(minutes=10)
+                    session.commit()
+                if doc.error or doc.extraction is None or doc.extraction.get('ocr_signature', 'tesseract-v1') != ocr_signature or (doc.role == 'report' and doc.extraction.get('parser') != REPORT_PARSER_VERSION) or (doc.role == 'primary' and 'business_metadata' not in doc.extraction):
                     try:
                         fact = cache.get(key)
                         if fact is None:
-                            fact = extract_report(doc.path, context) if doc.role == 'report' else extract_primary(doc.path)
+                            fact = extract_report(doc.path, context, progress=report_progress) if doc.role == 'report' else extract_primary(doc.path)
+                            fact['ocr_signature'] = ocr_signature
                         doc.extraction = fact
                         cache[key] = fact
                         doc.error = None
                     except Exception as e:
                         log.warning('Extraction failed for %s: %s', doc.id, e)
+                        doc.extraction = None
                         doc.error = str(e)[:1000]
                     session.commit()
                 elif not doc.error:
@@ -80,14 +103,15 @@ def process(run_id):
             for review in reviews:
                 doc = next((d for d in snapshot if d['id'] == review['document_id']), None)
                 if doc:
-                    doc['extraction'] = copy.deepcopy(doc['extraction'] or {})
-                    doc['extraction'].update(review['changes'])
-                    doc['extraction'].update(needs_review=False, reviewed=True)
+                    apply_document_changes(doc, review['changes'], context)
             result = reconcile(context, snapshot)
-            result.update(context=context, pipeline_version=PIPELINE_VERSION, rules_version=RULES['version'], reviews=reviews,
+            result['document_validation'] = validation_log(context, result)
+            result.update(context=context, pipeline_version=PIPELINE_VERSION, rules_version=RULES['version'], ocr=ocr.provenance(), reviews=reviews,
                           created_at=now().isoformat(), run_id=run.id)
             run.payload = result
             run.status, run.progress, run.message, run.lease_until = 'completed', 100, 'Сверка завершена', None
+            run.finished_at = now()
+            result['timing'] = run_timing(run)
             case.status = 'completed'
             session.commit()
     except Exception as e:
@@ -95,6 +119,7 @@ def process(run_id):
         with Session.begin() as session:
             run = session.get(Run, run_id)
             run.status, run.message, run.lease_until = 'failed', str(e)[:1000], None
+            run.finished_at = now()
             session.get(Case, run.case_id).status = 'failed'
 
 

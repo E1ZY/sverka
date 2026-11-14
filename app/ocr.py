@@ -1,13 +1,53 @@
-"""Local OCR provider. No network calls. Coordinates are in input-image pixels."""
+"""Selectable local OCR providers. Coordinates are in input-image pixels."""
+from difflib import SequenceMatcher
+import json
 import os
 from pathlib import Path
 
 from PIL import Image
 
 from .config import ROOT
+from .ocr_settings import OCRSettings
 
 
 def words(image: Image.Image, psm=6, numeric=False):
+    settings = OCRSettings.from_env()
+    if settings.provider == 'xiaomi':
+        from .xiaomi_ocr import words as xiaomi_words
+        result = xiaomi_words(image, settings, psm=psm, numeric=numeric)
+        if psm == 7:
+            # Callers already know the cell/label region and do not consume word boxes.
+            return result
+        # Tesseract supplies locations only; Xiaomi remains the text recognizer.
+        # Unmatched text keeps its honest, coarse input-region box.
+        try:
+            layout = _tesseract_words(image, psm, numeric)
+        except Exception:
+            layout = []
+        normalize = lambda token: token['text'].casefold().strip()
+        for block in SequenceMatcher(None, list(map(normalize, result)), list(map(normalize, layout)), autojunk=False).get_matching_blocks():
+            for offset in range(block.size):
+                result[block.a+offset]['bbox'] = layout[block.b+offset]['bbox']
+                result[block.a+offset]['bbox_precision'] = 'word'
+        return result
+    return _tesseract_words(image, psm, numeric)
+
+
+def signature():
+    return OCRSettings.from_env().signature()
+
+
+def provenance():
+    settings = OCRSettings.from_env()
+    result = {'provider': settings.provider, 'signature': settings.signature()}
+    if settings.provider == 'xiaomi':
+        manifest = Path(settings.model) / 'sverka-model.json'
+        metadata = json.loads(manifest.read_text(encoding='utf-8')) if manifest.is_file() else {}
+        result.update(model=metadata.get('model', 'local'), revision=metadata.get('revision'), device=settings.device)
+    return result
+
+
+def _tesseract_words(image: Image.Image, psm=6, numeric=False):
     lang = 'eng' if numeric else 'rus+eng'
     try:
         import tesserocr

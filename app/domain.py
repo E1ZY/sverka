@@ -4,6 +4,7 @@ import json
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
+from .card_metadata import party_conflict
 
 RULES = json.loads(Path(__file__).with_name('rules.json').read_text(encoding='utf-8'))
 ARTICLES = RULES['articles']
@@ -60,6 +61,9 @@ def reconcile(context, documents):
                 issue, detail = 'OUT_OF_PERIOD', 'Период операции находится вне проверяемого интервала.'
             elif date.fromisoformat(fact['period_start']) < start or date.fromisoformat(fact['period_end']) > end:
                 issue, detail = 'PERIOD_OVERLAP', 'Период частично пересекает проверяемый. Требуется распределение суммы.'
+                uncertain = True
+            elif party_conflict(report, fact):
+                issue, detail = 'METADATA_MISMATCH', 'Заказчик или исполнитель, явно указанный в документе, не совпадает с главным отчётом.'
                 uncertain = True
             elif fact.get('needs_review'):
                 issue, detail = 'LOW_CONFIDENCE', 'Результат распознавания требует подтверждения.'
@@ -124,7 +128,7 @@ def reconcile(context, documents):
                 reason = 'Нет единственного расчётного документа для каждого месяца периода.'
         if not context.get('complete_package', False):
             reason = 'Комплект не заявлен полным. Рассчитана только подтверждённая часть.'
-        if actual is None or report.get('needs_review'):
+        if actual is None or report.get('needs_review') or any(doc.get('error') for doc in report_docs):
             reason = 'Значение или строка КФЗ не распознаны уверенно.'
         if report.get('contract') != context['contract']:
             reason = 'Договор итогового отчёта не подтверждён или не совпадает с контекстом.'

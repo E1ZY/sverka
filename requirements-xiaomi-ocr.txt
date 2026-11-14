@@ -1,0 +1,5 @@
+# Optional local Xiaomi-OCR-0 runtime. Install CUDA torch first for an NVIDIA GPU.
+# Version combination published in the upstream model card; also supports Python 3.12.
+torch==2.14.0
+torchvision==0.29.0
+transformers==5.17.0

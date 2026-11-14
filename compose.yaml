@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16-bookworm
+    restart: unless-stopped
     environment:
       POSTGRES_DB: reconciliation
       POSTGRES_USER: audit
@@ -13,13 +14,23 @@ services:
       timeout: 3s
       retries: 15
   api:
-    build: .
+    restart: unless-stopped
+    build:
+      context: .
+      args:
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}
     image: reconciliation-mvp:local
+    pull_policy: never
     environment:
       <<: &app-env
         DATABASE_URL: postgresql+psycopg://audit:${POSTGRES_PASSWORD:-local-audit-password}@db:5432/reconciliation
         DATA_DIR: /data
         EMBED_WORKER: "false"
+        OCR_PROVIDER: ${DOCKER_OCR_PROVIDER:-xiaomi}
+        XIAOMI_OCR_MODEL: /models/xiaomi-ocr-0
+        XIAOMI_OCR_DEVICE: ${DOCKER_OCR_DEVICE:-auto}
+        XIAOMI_OCR_MAX_NEW_TOKENS: ${XIAOMI_OCR_MAX_NEW_TOKENS:-4096}
+        XIAOMI_OCR_TIMEOUT: ${XIAOMI_OCR_TIMEOUT:-600}
       AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:-}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-true}
       AUTH_MODE: ${AUTH_MODE:-password}
@@ -30,23 +41,43 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:8000:8000"
     volumes:
       - documents:/data
+      - ./.runtime/models:/models:ro
     depends_on:
       db:
         condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
       interval: 5s
       timeout: 3s
       retries: 15
-  worker:
+  model-init:
     image: reconciliation-mvp:local
+    pull_policy: never
+    user: "0:0"
+    command: ["python", "scripts/prepare_docker_model.py"]
+    environment:
+      OCR_PROVIDER: ${DOCKER_OCR_PROVIDER:-xiaomi}
+      XIAOMI_OCR_MODEL: /models/xiaomi-ocr-0
+      HF_HOME: /tmp/huggingface
+    volumes:
+      - ./.runtime/models:/models
+    restart: "no"
+  worker:
+    restart: unless-stopped
+    image: reconciliation-mvp:local
+    pull_policy: never
     command: ["python", "-m", "app.worker"]
     environment: *app-env
     volumes:
       - documents:/data
+      - ./.runtime/models:/models:ro
     depends_on:
       api:
         condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
 volumes:
   postgres-data:
   documents:
