@@ -1,5 +1,13 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, FileText } from "lucide-react";
+import { Column } from "primereact/column";
+import { addLocale, PrimeReactProvider } from "primereact/api";
+import { TreeTable, type TreeTableExpandedKeysType } from "primereact/treetable";
+import type { TreeNode as PrimeTreeNode } from "primereact/treenode";
+
+const tableLocale = { aria: { expandLabel: "Развернуть строку", collapseLabel: "Свернуть строку", expandRow: "Развернуть строку", collapseRow: "Свернуть строку" } };
+addLocale("sverka-ru", tableLocale);
+const tableOptions = { locale: "sverka-ru" };
 
 type Evidence = {
   text: string;
@@ -71,7 +79,6 @@ const labels: Record<string, string> = {
   MATCH: "Обосновано",
   MISMATCH: "Расхождение",
   INSUFFICIENT_DATA: "Не обосновано",
-  REFERENCE: "Справочно",
   UNALLOCATED: "Не распределено",
 };
 const groups: Record<string, string> = {
@@ -344,32 +351,20 @@ export function CostTreePanel({
     [view, setView] = useState("compare"),
     [issues, setIssues] = useState(false);
   const [expanded, setExpanded] = useState(
-    new Set(["stage", ...tree.root.children.map((child) => child.id)]),
+    Object.fromEntries(["stage", ...tree.root.children.map((child) => child.id)].map(id => [id, true])) as TreeTableExpandedKeysType,
   );
-  const toggle = (id: string) =>
-    setExpanded((current) => {
-      const next = new Set(current);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  const flatten = (
-    node: TreeNode,
-    level = 0,
-  ): { node: TreeNode; level: number }[] => [
-    ...(!issues || (node.status !== "MATCH" && node.status !== "REFERENCE")
-      ? [{ node, level }]
-      : []),
-    ...(expanded.has(node.id)
-      ? node.children.flatMap((child) => flatten(child, level + 1))
-      : []),
-  ];
+  const toTableNode = (node: TreeNode): PrimeTreeNode | null => {
+    // Also hide reference rows when viewing a response from an older server.
+    if (node.reference || node.status === "REFERENCE" || (view === "claimed" && node.allocation)) return null;
+    const children = node.children.map(toTableNode).filter((child): child is PrimeTreeNode => child !== null);
+    if (issues && node.status === "MATCH" && !children.length) return null;
+    return { key: node.id, data: node, children, leaf: !children.length };
+  };
+  const root = toTableNode(tree.root);
   const report = tree.document_validation.find(
     (item) => item.role === "report",
   );
-  const allNodes = (node: TreeNode): string[] => [
-    node.id,
-    ...node.children.flatMap(allNodes),
-  ];
+  const allNodes = (node: TreeNode): string[] => node.children.length ? [node.id, ...node.children.flatMap(allNodes)] : [];
   return (
     <section className="panel cost-tree-panel">
       <div className="tree-tabs" aria-label="Представление результата">
@@ -408,13 +403,13 @@ export function CostTreePanel({
             </div>
             <button
               className="text-button"
-              onClick={() => setExpanded(new Set(allNodes(tree.root)))}
+              onClick={() => setExpanded(Object.fromEntries(allNodes(tree.root).map(id => [id, true])))}
             >
               Развернуть всё
             </button>
             <button
               className="text-button"
-              onClick={() => setExpanded(new Set(["stage"]))}
+              onClick={() => setExpanded({ stage: true })}
             >
               Свернуть
             </button>
@@ -422,7 +417,10 @@ export function CostTreePanel({
               <input
                 type="checkbox"
                 checked={issues}
-                onChange={(event) => setIssues(event.target.checked)}
+                onChange={(event) => {
+                  setIssues(event.target.checked);
+                  if (event.target.checked) setExpanded(Object.fromEntries(allNodes(tree.root).map(id => [id, true])));
+                }}
               />
               Только проблемы
             </label>
@@ -432,112 +430,45 @@ export function CostTreePanel({
             <span className="MISMATCH">Расхождение · 2</span>
             <span className="INSUFFICIENT_DATA">Не обосновано · 3</span>
             <small>
-              Родитель получает самый строгий статус потомков. Справочный этап
-              исключён.
+              Родитель получает самый строгий статус потомков.
             </small>
           </div>
-          <div className="register-scroll">
-            <table
-              className="register-table cost-tree"
-              role="treegrid"
-              aria-label="Дерево затрат"
-            >
-              <thead>
-                <tr>
-                  <th>Этап → категория → подкатегория → период</th>
-                  {view !== "confirmed" && <th>Заявлено, ₽</th>}
-                  {view !== "claimed" && <th>По документам, ₽</th>}
-                  {view === "compare" && <th>Разница, ₽</th>}
-                  <th>Обоснованность</th>
-                  <th>Подтверждающая запись</th>
-                </tr>
-              </thead>
-              <tbody>
-              {flatten(tree.root).filter(({node}) => view !== "claimed" || !node.allocation).map(({ node, level }) => (
-                  <tr
-                    key={node.id}
-                    className={node.status}
-                    aria-level={level + 1}
-                    aria-expanded={
-                      node.children.length ? expanded.has(node.id) : undefined
-                    }
-                  >
-                    <td>
-                      <div
-                        className="tree-label"
-                        style={{ paddingLeft: level * 18 }}
-                      >
-                        {node.children.length ? (
-                          <button
-                            className="tree-toggle"
-                            aria-label={`${expanded.has(node.id) ? "Свернуть" : "Развернуть"} ${node.name}`}
-                            onClick={() => toggle(node.id)}
-                          >
-                            {expanded.has(node.id) ? (
-                              <ChevronDown size={15} />
-                            ) : (
-                              <ChevronRight size={15} />
-                            )}
-                          </button>
-                        ) : (
-                          <span className="tree-leaf-dot" />
-                        )}
-                        <span>
-                          {node.code && <small>{node.code}</small>}
-                          {node.name}
-                        </span>
-                      </div>
-                    </td>
-                    {view !== "confirmed" && (
-                      <td className="money">
-                        {node.evidence && node.report_id ? (
-                          <button
-                            title="Показать сумму в главном отчёте"
-                            onClick={() =>
-                              onSource(node.report_id!, node.evidence)
-                            }
-                          >
-                            {rub(node.actual)}
-                          </button>
-                        ) : (
-                          rub(node.actual)
-                        )}
-                      </td>
-                    )}
-                    {view !== "claimed" && (
-                      <td className="money">{rub(node.expected ?? node.confirmed_subtotal)}{node.expected == null && node.confirmed_subtotal != null && <small className="partial-amount">Подтверждено частично</small>}</td>
-                    )}
-                    {view === "compare" && (
-                      <td className="money">{rub(node.delta)}</td>
-                    )}
-                    <td>
-                      <span className="tree-status" title={node.reason}>
-                        {labels[node.status]}
-                      </span>
-                    </td>
-                    <td>
-                      {node.status !== "INSUFFICIENT_DATA" &&
-                        node.sources.map((source) => (
-                          <button
-                            key={source.document_id}
-                            className="tree-source"
-                            onClick={() =>
-                              onSource(source.document_id, source.evidence)
-                            }
-                          >
-                            {source.name}
-                            {source.evidence?.sheet
-                              ? ` · ${source.evidence.sheet}!${source.evidence.range}`
-                              : ` · стр. ${source.evidence?.page || 1}`}{" "}
-                            · {rub(source.amount)} ₽
-                          </button>
-                        ))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PrimeReactProvider value={tableOptions}><TreeTable
+            value={root ? [root] : []}
+            expandedKeys={expanded}
+            onToggle={(event) => setExpanded(event.value)}
+            unstyled
+            className="cost-tree-widget register-scroll"
+            tableClassName="register-table cost-tree"
+            rowClassName={(node) => ({ [node.data.status]: true })}
+            pt={{ root: { role: "presentation" }, table: { role: "treegrid", "aria-label": "Дерево затрат" }, rowToggler: { className: "cost-node-toggle" } }}
+            emptyMessage="Проблем с выбранными условиями нет"
+          >
+            <Column field="name" header="Этап → категория → подкатегория → период" expander
+              body={(item: PrimeTreeNode) => <span className="cost-node-label">
+                {item.data.code && <small>{item.data.code}</small>}{item.data.name}
+              </span>} />
+            {view !== "confirmed" && <Column header="Заявлено, ₽" bodyClassName="money" body={(item: PrimeTreeNode) => {
+              const node = item.data as TreeNode;
+              return node.evidence && node.report_id ? <button title="Показать сумму в главном отчёте"
+                onClick={() => onSource(node.report_id!, node.evidence)}>{rub(node.actual)}</button> : rub(node.actual);
+            }} />}
+            {view !== "claimed" && <Column header="По документам, ₽" bodyClassName="money" body={(item: PrimeTreeNode) => {
+              const node = item.data as TreeNode;
+              return <>{rub(node.expected ?? node.confirmed_subtotal)}
+                {node.expected == null && node.confirmed_subtotal != null && <small className="partial-amount">Подтверждено частично</small>}</>;
+            }} />}
+            {view === "compare" && <Column header="Разница, ₽" bodyClassName="money" body={(item: PrimeTreeNode) => rub(item.data.delta)} />}
+            <Column header="Обоснованность" body={(item: PrimeTreeNode) =>
+              <span className="tree-status" title={item.data.reason}>{labels[item.data.status]}</span>} />
+            <Column header="Подтверждающая запись" body={(item: PrimeTreeNode) => {
+              const node = item.data as TreeNode;
+              return node.status !== "INSUFFICIENT_DATA" && node.sources.map((source) =>
+                <button key={source.document_id} className="tree-source" onClick={() => onSource(source.document_id, source.evidence)}>
+                  {source.name}{source.evidence?.sheet ? ` · ${source.evidence.sheet}!${source.evidence.range}` : ` · стр. ${source.evidence?.page || 1}`} · {rub(source.amount)} ₽
+                </button>);
+            }} />
+          </TreeTable></PrimeReactProvider>
           <p className="tree-explanation">{tree.note}</p>
         </>
       )}

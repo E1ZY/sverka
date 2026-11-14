@@ -88,6 +88,9 @@
 .register-actions .icon-button {
   padding: 8px;
 }
+.register-actions .text-button {
+  white-space: nowrap;
+}
 .danger-text {
   color: #b84f49;
 }
@@ -269,10 +272,6 @@
 .cost-tree tr.INSUFFICIENT_DATA > td {
   background: #fdf2ef;
 }
-.cost-tree tr.REFERENCE > td {
-  background: #f4f6f8;
-  color: #758398;
-}
 .cost-tree tr[aria-level="1"] > td {
   font-weight: 600;
   border-bottom: 2px solid #c9d3e0;
@@ -298,6 +297,25 @@
   gap: 7px;
   padding: 4px 0;
 }
+.cost-node-toggle {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 24px;
+  height: 26px;
+  margin-right: 7px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.cost-node-toggle svg { width: 14px; height: 14px; }
+.cost-node-toggle:focus-visible { outline: 2px solid #6078dc; outline-offset: 2px; border-radius: 3px; }
+.cost-node-label { display: inline; }
+.cost-node-label small { margin-right: 7px; font-size: 10px; color: #728195; }
+.additional-checks { margin-top: 20px; }
+.additional-checks table { min-width: 650px; }
+.additional-checks th:first-child { width: 20%; }
+.additional-checks th:nth-child(2) { width: 30%; }
+.additional-checks td { overflow-wrap: anywhere; }
 .tree-leaf-dot {
   width: 4px;
   height: 4px;

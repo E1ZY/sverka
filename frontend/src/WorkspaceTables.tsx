@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   ArrowDownToLine,
+  CopyPlus,
   FileText,
   Loader2,
   Search,
@@ -33,7 +34,7 @@ export function ChecksTable({
   query,
   onQuery,
   onOpen,
-  onEdit,
+  onCopy,
   onDelete,
   onClear,
   busy,
@@ -42,7 +43,7 @@ export function ChecksTable({
   query: string;
   onQuery: (value: string) => void;
   onOpen: (id: string) => void;
-  onEdit: (id: string) => void;
+  onCopy: (id: string) => void;
   onDelete: (id: string) => void;
   onClear: () => void;
   busy: boolean;
@@ -109,8 +110,8 @@ export function ChecksTable({
                 <td>
                   <button
                     className="register-title"
-                    onClick={() => active(item) ? onOpen(item.id) : onEdit(item.id)}
-                    title={active(item) ? 'Открыть выполняющуюся сверку' : 'Открыть заполненный комплект для новой сверки'}
+                    onClick={() => onOpen(item.id)}
+                    title={item.status === 'completed' ? 'Открыть сохранённый отчёт' : 'Открыть сверку'}
                   >
                     <strong>{item.title}</strong>
                     <CaseId id={item.id} compact />
@@ -143,11 +144,12 @@ export function ChecksTable({
                   <div className="register-actions">
                     <button
                       className="text-button"
-                      title="Открыть сохранённый результат"
-                      aria-label={`Открыть результат «${item.title}»`}
-                      onClick={() => onOpen(item.id)}
+                      title="Создать новый отчёт на основе этих документов и параметров"
+                      aria-label={`Новый отчёт на основе «${item.title}»`}
+                      disabled={busy || active(item)}
+                      onClick={() => onCopy(item.id)}
                     >
-                      {item.status === 'draft' ? 'Открыть' : 'Результат'}
+                      <CopyPlus size={16} /> Новый отчёт
                     </button>
                     {item.status === "completed" && (
                       <a

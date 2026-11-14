@@ -121,12 +121,13 @@ def test_card_metadata_uses_document_values_and_keeps_missing_values_unknown():
     assert all(field['value'] is None for field in card_metadata([]).values())
 
 
-def test_tree_excludes_reference_stage_and_propagates_strictest_status():
+def test_tree_hides_other_stages_and_propagates_strictest_status():
     columns = {str(column): '0.00' for column in (4,7,8,9,12,13,14,15,16)}
     docs = [{'id':'r', 'name':'r.pdf', 'role':'report', 'extraction': {'cost_rows': [
         {'stage':2,'year':None,'values':{**columns,'15':'9000000'}},
         {'stage':3,'year':2025,'values':{**columns,'15':'10'}},
         {'stage':3,'year':2026,'values':{**columns,'15':'20'}},
+        {'stage':4,'year':2027,'values':{**columns,'15':'8000000'}},
     ]}}]
     metrics = [{'code':'0800','actual':'20','expected':'19','terms':[]}]
     tree = build_cost_tree(CONTEXT, {'documents':docs,'metrics':metrics,'findings':[]})
@@ -135,7 +136,14 @@ def test_tree_excludes_reference_stage_and_propagates_strictest_status():
     assert tree['root']['status'] == 'INSUFFICIENT_DATA'
     branch = next(node for node in tree['root']['children'] if node['id']=='0800')
     assert branch['status'] == 'INSUFFICIENT_DATA'  # missing 2025 outranks the 2026 mismatch
-    assert branch['children'][0]['children'][1]['reference'] is True
+    def flatten(node):
+        return [node, *(child for branch in node['children'] for child in flatten(branch))]
+    nodes = flatten(tree['root'])
+    assert not any(node.get('reference') or node['status'] == 'REFERENCE' for node in nodes)
+    assert not any('справочно' in node['name'] or '2 этап' in node['name'] or '4 этап' in node['name'] for node in nodes)
+    assert tree['periods'] == [2025, 2026]
+    leaves = branch['children'][0]['children'][0]['children']
+    assert [leaf['actual'] for leaf in leaves] == ['10', '20']
     assert branch['children'][0]['children'][0]['children'][1]['status'] == 'MISMATCH'
 
 

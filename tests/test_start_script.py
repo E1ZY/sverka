@@ -200,3 +200,72 @@ def test_server_exit_code_is_preserved(project):
     result, calls = run_start(project, SVERKA_SERVER_EXIT='7')
     assert result.returncode == 7
     assert calls == ['build', 'server']
+
+
+def break_base_python(folder):
+    config = folder/'.venv/pyvenv.cfg'
+    missing_home = folder/'removed base python'
+    lines = config.read_text(encoding='utf-8').splitlines()
+    config.write_text('\n'.join(
+        'home = '+str(missing_home) if line.startswith('home =') else
+        'executable = '+str(missing_home/'python.exe') if line.startswith('executable =') else line
+        for line in lines
+    )+'\n', encoding='utf-8')
+
+
+@pytest.mark.parametrize('already_built', [False, True])
+def test_removed_base_python_stops_before_frontend_and_explains_repair(project, already_built):
+    if already_built:
+        assert_started(*run_start(project), build=True)
+    folder, _ = project
+    break_base_python(folder)
+    result, calls = run_start(project)
+    assert result.returncode != 0
+    assert calls == []
+    assert '.venv' in result.stderr and 'pyvenv.cfg' in result.stderr
+    assert 'py -3.12 -m venv --upgrade .venv' in result.stderr
+
+
+def test_non_venv_python_is_not_silently_used(project):
+    folder, _ = project
+    site = folder/'.venv/Lib/site-packages'
+    (site/'sitecustomize.py').write_text('import sys\nsys.prefix = sys.base_prefix\n', encoding='utf-8')
+    result, calls = run_start(project)
+    assert result.returncode != 0
+    assert calls == []
+    assert '.venv' in result.stderr
+
+
+def test_missing_venv_python_stops_without_build_or_server(project):
+    folder, _ = project
+    (folder/'.venv/Scripts/python.exe').unlink()
+    result, calls = run_start(project)
+    assert result.returncode != 0
+    assert calls == []
+
+
+@pytest.mark.parametrize('broken', [False, True])
+def test_project_diagnostics_inspect_venv_even_with_global_python_override(project, broken):
+    folder, env = project
+    script = folder/'scripts/check_dependencies.ps1'
+    shutil.copyfile(ROOT/'scripts/check_dependencies.ps1', script)
+    (folder/'requirements.txt').write_text('fastapi==0.162.4\n', encoding='utf-8')
+    if broken:
+        break_base_python(folder)
+    result = subprocess.run(
+        [str(POWERSHELL), '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+         str(script), '-Project', '-Json', '-PythonExe', sys.executable],
+        cwd=folder, env=env, capture_output=True, text=True, encoding='utf-8', timeout=40,
+    )
+    assert not result.stderr, result.stderr
+    report = json.loads(result.stdout)
+    checks = {check['name']: check for check in report['checks']}
+    assert checks['.venv']['status'] == ('ERROR' if broken else 'OK')
+    assert not report['ready']
+    if broken:
+        assert checks['Пакеты и OCR проекта']['status'] == 'SKIP'
+        assert 'pyvenv.cfg' in checks['.venv']['hint']
+    else:
+        # The global test interpreter has FastAPI; the isolated fixture venv does not.
+        assert checks['Python-пакеты проекта']['status'] == 'ERROR'
+        assert 'fastapi' in checks['Python-пакеты проекта']['detail']

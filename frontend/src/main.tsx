@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowDownToLine,
@@ -43,8 +43,10 @@ import { AuthGate } from "./AuthGate";
 import { authFetch } from "./auth";
 import { CaseId } from "./CaseId";
 import { ChecksTable, DocumentsRegister } from "./WorkspaceTables";
-import { CostTreePanel, type TreeSnapshot } from "./CostTreePanel";
+import type { TreeSnapshot } from "./CostTreePanel";
 import "./workspace.css";
+
+const CostTreePanel = lazy(() => import("./CostTreePanel").then(module => ({ default: module.CostTreePanel })));
 
 type Evidence = {
   text: string;
@@ -102,6 +104,7 @@ type Metric = {
 type Finding = {
   type: string;
   document_id: string;
+  article?: string;
   name?: string;
   detail: string;
 };
@@ -700,7 +703,7 @@ function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
                 </div>
               )}
               {!!cases.length && <ChecksTable items={cases} query={caseQuery} onQuery={setCaseQuery} onOpen={choose}
-                onEdit={(id) => void action(async () => { setCopySource(await api<Case>("/cases/" + id)); setNewOpen(true); })}
+                onCopy={(id) => void action(async () => { setCopySource(await api<Case>("/cases/" + id)); setNewTutorial(false); setNewOpen(true); })}
                 onDelete={(id) => { const item = cases.find(value => value.id === id); if (item) openDeleteCheck(item); }}
                 onClear={openClearChecks} busy={busy}/>}
             </>
@@ -945,7 +948,9 @@ function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
                   </button>
                 </div>
               </div>
-              {tab === "checks" && current.cost_tree && <CostTreePanel key={current.active_run_id} tree={current.cost_tree} onSource={showSource}/>}
+              {tab === "checks" && current.cost_tree && <Suspense fallback={<section className="panel empty-small" role="status">Загружаем дерево отчёта…</section>}>
+                <CostTreePanel key={current.active_run_id} tree={current.cost_tree} onSource={showSource}/>
+              </Suspense>}
               {tab === "checks" &&
                 (result ? (
                   <>
@@ -1047,55 +1052,39 @@ function App({ onLogout }: { onLogout: (() => Promise<void>) | null }) {
                         <span>Точность до копейки</span>
                       </div>
                     </section>
-                    <div className="lower-grid">
-                      <section className="panel">
+                    <section className="panel additional-checks">
                         <div className="panel-heading">
-                          <h2>Контроль комплекта</h2>
+                          <h2>Дополнительные проверки</h2>
                           <span className="subtle">
-                            Всего: {result.findings.length}
+                            Всего: {result.findings.length + result.unverified.length}
                           </span>
                         </div>
-                        {result.findings.length ? (
-                          result.findings.map((f, i) => (
-                            <button
-                              className="finding"
-                              key={i}
-                              onClick={() => showSource(f.document_id)}
-                            >
-                              <span className="finding-icon">
-                                <Files size={17} />
-                              </span>
-                              <div>
-                                <strong>{labels[f.type] || f.type}</strong>
-                                <span>{f.name || f.detail}</span>
-                              </div>
-                              <ChevronRight size={16} />
-                            </button>
-                          ))
-                        ) : (
+                        {result.findings.length + result.unverified.length ? <div className="register-scroll">
+                          <table className="register-table" aria-label="Дополнительные проверки">
+                            <thead><tr><th>Проверка</th><th>Документ / статья</th><th>Результат и пояснение</th></tr></thead>
+                            <tbody>
+                              {result.findings.map((finding, index) => {
+                                const document = docs.find(item => item.id === finding.document_id);
+                                const target = finding.article || finding.name || document?.name || "—";
+                                return <tr key={`finding-${index}`}>
+                                  <td>{labels[finding.type] || finding.type}</td>
+                                  <td>{document ? <button className="text-button" onClick={() => showSource(document.id)}>
+                                    <FileText size={14} />{target}
+                                  </button> : target}</td>
+                                  <td>{finding.detail}</td>
+                                </tr>;
+                              })}
+                              {result.unverified.map(item => <tr key={`unverified-${item.code}`}>
+                                <td>Вне расчёта</td><td>{item.code} · {item.name}</td><td>{item.reason}</td>
+                              </tr>)}
+                            </tbody>
+                          </table>
+                        </div> : (
                           <div className="empty-small">
-                            Замечаний к комплекту нет
+                            Дополнительных замечаний нет
                           </div>
                         )}
-                      </section>
-                      <section className="panel">
-                        <div className="panel-heading">
-                          <h2>Границы проверки</h2>
-                          <span className="subtle">
-                            {result.unverified.length} вне расчёта
-                          </span>
-                        </div>
-                        {result.unverified.map((m) => (
-                          <div className="unverified" key={m.code}>
-                            <span className="tiny-dot" />
-                            <div>
-                              <strong>{m.name}</strong>
-                              <p>{m.reason}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </section>
-                    </div>
+                    </section>
                     <p className="scope-note">
                       <ShieldCheck size={14} />
                       {result.summary.scope}
