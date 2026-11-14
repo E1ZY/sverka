@@ -133,9 +133,9 @@ def test_tree_hides_other_stages_and_propagates_strictest_status():
     tree = build_cost_tree(CONTEXT, {'documents':docs,'metrics':metrics,'findings':[]})
     assert tree['root']['actual'] == '30.00'
     assert tree['root']['expected'] is None
-    assert tree['root']['status'] == 'INSUFFICIENT_DATA'
+    assert tree['root']['status'] == 'MISMATCH'
     branch = next(node for node in tree['root']['children'] if node['id']=='0800')
-    assert branch['status'] == 'INSUFFICIENT_DATA'  # missing 2025 outranks the 2026 mismatch
+    assert branch['status'] == 'MISMATCH'  # a proven 2026 mismatch outranks unverified 2025
     def flatten(node):
         return [node, *(child for branch in node['children'] for child in flatten(branch))]
     nodes = flatten(tree['root'])
@@ -169,6 +169,36 @@ def test_parent_uses_child_status_priority(monkeypatch, expected, status):
     result = {'documents':[{'id':'r','name':'r.pdf','role':'report','extraction':{'cost_rows':[{'stage':3,'year':2026,'values':{'15':'20.00'}}]}}],
               'metrics':[{'code':'0800','actual':'20.00','expected':expected,'terms':[]}], 'findings':[]}
     assert module.build_cost_tree(CONTEXT, result)['root']['status'] == status
+
+
+def test_missing_breakdown_is_unverified_even_when_aggregate_matches(monkeypatch):
+    import app.cost_tree as module
+    monkeypatch.setattr(module, 'CATEGORIES', [('0200', 'Оплата труда', [(7, 'Основная'), (8, 'Дополнительная')])])
+    result = {'documents': [{'id': 'r', 'name': 'report.pdf', 'role': 'report', 'extraction': {'cost_rows': [
+        {'stage': 3, 'year': 2026, 'values': {'7': '40.00', '8': '20.00'}},
+    ]}}], 'metrics': [{'code': '0200', 'actual': '60.00', 'expected': '60.00', 'confirmed_subtotal': '60.00',
+                      'status': 'MATCH', 'terms': [{'document_id': 'd', 'amount': '60.00'}]}], 'findings': []}
+    root = module.build_cost_tree(CONTEXT, result)['root']
+    assert root['actual'] == '60.00'
+    assert root['expected'] is None  # the matching total does not establish its breakdown
+    assert root['confirmed_subtotal'] == '60.00'
+    assert root['status'] == 'INSUFFICIENT_DATA'
+    assert 'НЕПРОВЕРЕНО' in root['reason']
+    allocation = root['children'][0]['children'][-1]
+    assert allocation['status'] == 'UNALLOCATED'
+    assert 'НЕПРОВЕРЕНО' in allocation['reason']
+
+
+def test_missing_claimed_value_has_a_reason_without_fabricating_mismatch(monkeypatch):
+    import app.cost_tree as module
+    monkeypatch.setattr(module, 'CATEGORIES', [('0800', 'Производственные', [(15, 'Расходы')])])
+    result = {'documents': [{'id': 'r', 'name': 'report.pdf', 'role': 'report', 'extraction': {}}],
+              'metrics': [{'code': '0800', 'actual': None, 'expected': '10.00', 'terms': []}], 'findings': []}
+    root = module.build_cost_tree(CONTEXT, result)['root']
+    leaf = root['children'][0]['children'][0]['children'][0]['children'][0]
+    assert root['status'] == leaf['status'] == 'INSUFFICIENT_DATA'
+    assert leaf['actual'] is None and leaf['delta'] is None
+    assert 'НЕПРОВЕРЕНО' in leaf['reason'] and 'не распознана' in leaf['reason']
 
 
 def test_party_roles_and_uncertain_ocr_do_not_cause_false_rejection():

@@ -12,7 +12,8 @@ CATEGORIES = [
     ('0800', 'Общепроизводственные затраты', [(15, 'Общепроизводственные расходы')]),
     ('0900', 'Общехозяйственные затраты', [(16, 'Общехозяйственные расходы')]),
 ]
-WEIGHTS = {'MATCH': 1, 'MISMATCH': 2, 'INSUFFICIENT_DATA': 3, 'UNALLOCATED': 3}
+# Missing proof is a warning; an established discrepancy takes precedence.
+WEIGHTS = {'MATCH': 1, 'INSUFFICIENT_DATA': 2, 'UNALLOCATED': 2, 'MISMATCH': 3}
 
 
 def amount_sum(values):
@@ -40,12 +41,18 @@ def build_cost_tree(context, result):
         if value is None and column in (15, 16) and year == selected_year:
             value, evidence = metric.get('actual'), metric.get('report_evidence')
         status = 'INSUFFICIENT_DATA' if value is None or expected is None else ('MATCH' if money(value) == money(expected) else 'MISMATCH')
+        if value is None:
+            reason = 'НЕПРОВЕРЕНО: заявленная сумма этой строки не распознана в карточке.'
+        elif expected is None:
+            reason = 'НЕПРОВЕРЕНО: ' + ('нет распределения документов по подкатегории.' if column not in (15, 16) else 'нет подтверждения за этот период.')
+        else:
+            reason = 'Заявленная сумма отличается от суммы по принятым документам.' if status == 'MISMATCH' else None
         return {'id': f'{code}.{column}.{year}',
                 'name': f'{stage} этап · {year}',
                 'code': str(column), 'actual': value, 'expected': expected, 'status': status,
                 'delta': str(money(value)-money(expected)) if value is not None and expected is not None else None,
                 'evidence': evidence, 'report_id': report.get('id'),
-                'reason': None if expected is not None else ('Нет распределения документов по подкатегории.' if column not in (15, 16) else 'Нет подтверждения за этот период.'),
+                'reason': reason,
                 'sources': metric.get('terms', []) if expected is not None else [], 'children': []}
 
     def parent(identifier, name, children, code=''):
@@ -54,9 +61,16 @@ def build_cost_tree(context, result):
         partial = [child.get('expected') if child.get('expected') is not None else child.get('confirmed_subtotal') for child in children]
         partial = [value for value in partial if value is not None]
         status = max((child['status'] for child in children), key=lambda s: WEIGHTS[s], default='INSUFFICIENT_DATA')
+        if status == 'MISMATCH':
+            problem = next(child for child in children if child['status'] == 'MISMATCH')
+            reason = f'Есть расхождение в дочерней строке «{problem["name"]}». Разверните ветку для просмотра расчёта.'
+        elif status in ('INSUFFICIENT_DATA', 'UNALLOCATED'):
+            reason = 'НЕПРОВЕРЕНО: не все дочерние строки обеспечены подтверждением или разбивкой. Это не доказывает расхождение сумм.'
+        else:
+            reason = None
         return {'id': identifier, 'code': code, 'name': name, 'actual': actual, 'expected': expected, 'status': status,
                 'delta': str(money(actual)-money(expected)) if actual is not None and expected is not None else None,
-                'children': children, 'sources': [], 'confirmed_subtotal': amount_sum(partial)}
+                'children': children, 'sources': [], 'confirmed_subtotal': amount_sum(partial), 'reason': reason}
 
     categories = []
     for code, name, columns in CATEGORIES:
@@ -69,7 +83,7 @@ def build_cost_tree(context, result):
             children.append({'id': code+'.unallocated', 'code': '', 'name': f'Принятые документы за {selected_year} без разбивки по подкатегориям',
                              'actual': None, 'expected': metric.get('confirmed_subtotal'), 'status': 'UNALLOCATED',
                              'allocation': True, 'children': [], 'sources': metric['terms'],
-                             'reason': 'Сумма подтверждена по статье. Для распределения по подкатегориям недостаточно данных.'})
+                             'reason': 'НЕПРОВЕРЕНО: есть принятые документы по статье, но их распределение по подкатегориям не подтверждено.'})
         categories.append(parent(code, name, children, '' if code == 'materials' else code))
     root = parent('stage', f'{stage} этап', categories)
     return {'root': root, 'periods': periods, 'metadata': fact.get('business_metadata') or card_metadata([{'text': fact.get('text', ''), 'page': 1}]),

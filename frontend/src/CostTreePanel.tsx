@@ -78,7 +78,7 @@ const rub = (value: string | null | undefined) =>
 const labels: Record<string, string> = {
   MATCH: "Обосновано",
   MISMATCH: "Расхождение",
-  INSUFFICIENT_DATA: "Не обосновано",
+  INSUFFICIENT_DATA: "Непроверено",
   UNALLOCATED: "Не распределено",
 };
 const groups: Record<string, string> = {
@@ -427,10 +427,10 @@ export function CostTreePanel({
           </div>
           <div className="tree-legend">
             <span className="MATCH">Обосновано · 1</span>
-            <span className="MISMATCH">Расхождение · 2</span>
-            <span className="INSUFFICIENT_DATA">Не обосновано · 3</span>
+            <span className="INSUFFICIENT_DATA">Непроверено / нет разбивки · 2</span>
+            <span className="MISMATCH">Расхождение · 3</span>
             <small>
-              Родитель получает самый строгий статус потомков.
+              Красный — выявлено расхождение. Жёлтый — данных недостаточно. Родитель наследует самый строгий статус.
             </small>
           </div>
           <PrimeReactProvider value={tableOptions}><TreeTable
@@ -459,8 +459,10 @@ export function CostTreePanel({
                 {node.expected == null && node.confirmed_subtotal != null && <small className="partial-amount">Подтверждено частично</small>}</>;
             }} />}
             {view === "compare" && <Column header="Разница, ₽" bodyClassName="money" body={(item: PrimeTreeNode) => rub(item.data.delta)} />}
-            <Column header="Обоснованность" body={(item: PrimeTreeNode) =>
-              <span className="tree-status" title={item.data.reason}>{labels[item.data.status]}</span>} />
+            <Column header="Обоснованность" body={(item: PrimeTreeNode) => <>
+              <span className="tree-status">{labels[item.data.status]}</span>
+              {item.data.reason && <small className="tree-reason">{item.data.reason}</small>}
+            </>} />
             <Column header="Подтверждающая запись" body={(item: PrimeTreeNode) => {
               const node = item.data as TreeNode;
               return node.status !== "INSUFFICIENT_DATA" && node.sources.map((source) =>

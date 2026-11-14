@@ -169,7 +169,7 @@
 }
 .page-heading > div:first-child { flex:1; }
 .page-heading .heading-actions { flex:0 0 auto; max-width:58%; }
-.cost-tree tr.UNALLOCATED > td { background:#fdf2ef; }
+.cost-tree tr.UNALLOCATED > td { background:#fff8e8; }
 .partial-amount, .metadata-uncertain { display:block; font-size:10px; color:#a1682c; }
 .page-heading .heading-actions .button {
   white-space: normal;
@@ -241,12 +241,12 @@
   color: #27684f;
 }
 .tree-legend .MISMATCH {
-  background: #fff2d9;
-  color: #966312;
-}
-.tree-legend .INSUFFICIENT_DATA {
   background: #fcece9;
   color: #9c4a42;
+}
+.tree-legend .INSUFFICIENT_DATA {
+  background: #fff2d9;
+  color: #966312;
 }
 .tree-legend small {
   color: #677b91;
@@ -267,11 +267,13 @@
   background: #f2f9f5;
 }
 .cost-tree tr.MISMATCH > td {
-  background: #fff8e8;
-}
-.cost-tree tr.INSUFFICIENT_DATA > td {
   background: #fdf2ef;
 }
+.cost-tree tr.INSUFFICIENT_DATA > td {
+  background: #fff8e8;
+}
+.cost-tree td:nth-last-child(2) { min-width: 220px; }
+.tree-reason { display:block; margin-top:5px; color:#685f50; font-size:10px; font-weight:400; white-space:normal; line-height:1.5; }
 .cost-tree tr[aria-level="1"] > td {
   font-weight: 600;
   border-bottom: 2px solid #c9d3e0;
